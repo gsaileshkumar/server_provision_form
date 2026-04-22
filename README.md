@@ -9,7 +9,7 @@ Web app for producing server provisioning specs across a three-stage workflow (E
 | `backend/` | Flask Form API (Pydantic v2, PyMongo) |
 | `agent/` | FastAPI + LangGraph agent service |
 | `frontend/` | Vite + React + TypeScript UI (form + CopilotKit chat) |
-| `docker-compose.yml` | MongoDB, form API, agent (all three services) |
+| `docker-compose.yml` | MongoDB, form API (serves built SPA), agent, CopilotKit runtime |
 
 ## Prerequisites
 
@@ -27,12 +27,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
-| Service | URL |
+The `form-api` image is a multi-stage build: stage 1 compiles the React SPA with Vite, stage 2 copies `dist/` into Flask's `app/static/` folder. Flask serves the SPA at `/`, handles `/api/*` natively, and reverse-proxies `/copilotkit/*` to the Node runtime service.
+
+Open the app at **http://localhost:5001** once the stack is up.
+
+| Service | URL / port |
 | --- | --- |
-| Form API | http://localhost:5001 |
-| Agent | http://localhost:5002 |
+| App (SPA + API) | http://localhost:5001 |
+| Agent (FastAPI) | http://localhost:5002 |
 | MongoDB | localhost:27017 |
 | Mongo Express (DB UI) | http://localhost:8081 |
+| CopilotKit runtime | internal only (proxied by form-api) |
 
 To run just the databases without rebuilding the app images:
 
@@ -40,20 +45,18 @@ To run just the databases without rebuilding the app images:
 docker compose up mongo mongo-express
 ```
 
-## Frontend dev server
+## Frontend dev (Vite HMR)
 
-The React UI is not included in Docker Compose (it runs under Vite HMR locally). Start it separately:
+For hot-reloading UI development, run Vite outside Docker:
 
 ```bash
 cd frontend
 npm install
 npm run dev        # http://localhost:5173
-
-# CopilotKit Node runtime bridge (required for the agent chat panel)
-npm run runtime    # http://localhost:5003
+npm run runtime    # http://localhost:5003 (CopilotKit Node bridge)
 ```
 
-Vite proxies `/api` → `:5001`, `/agent` → `:5002`, and `/copilotkit` → `:5003`, so the frontend always talks to `localhost` regardless of whether the backends run in Docker or bare-metal.
+Vite proxies `/api` → `:5001` and `/copilotkit` → `:5003`, so the dev server works against either a Docker or bare-metal Python stack.
 
 ## Local bare-metal bring-up (without Docker)
 

@@ -29,8 +29,11 @@ services:
 
   form-api:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # Root context so the multi-stage Dockerfile can see both backend/ and
+      # frontend/. Stage 1 builds the SPA; stage 2 copies dist/ into Flask's
+      # static folder.
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: sp_form_api
     restart: unless-stopped
     depends_on:
@@ -44,6 +47,8 @@ services:
       MONGO_URI: mongodb://mongo:27017
       FORM_API_HOST: "0.0.0.0"
       FORM_API_PORT: "5001"
+      # Flask proxies /copilotkit/* here on-demand, so no startup dependency.
+      COPILOTKIT_RUNTIME_URL: http://runtime:5003/copilotkit
 
   agent:
     build:
@@ -65,6 +70,23 @@ services:
       AGENT_HOST: "0.0.0.0"
       AGENT_PORT: "5002"
       FORM_API_URL: http://form-api:5001
+
+  runtime:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sp_runtime
+    restart: unless-stopped
+    depends_on:
+      agent:
+        condition: service_started
+    # Port exposure optional — Flask reverse-proxies this service.
+    expose:
+      - "5003"
+    environment:
+      RUNTIME_HOST: "0.0.0.0"
+      RUNTIME_PORT: "5003"
+      PYTHON_AGENT_URL: http://agent:5002/copilotkit
 
 volumes:
   mongo_data:
