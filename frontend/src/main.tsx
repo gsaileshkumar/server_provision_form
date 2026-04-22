@@ -10,7 +10,7 @@ import "./styles.css";
 // agent's CopilotKit endpoint; vite proxies /copilotkit → 5003 in dev.
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <CopilotKit runtimeUrl="/copilotkit" agent="provisioning_agent">
+    <CopilotKit runtimeUrl="/copilotkit">
       <BrowserRouter>
         <App />
       </BrowserRouter>

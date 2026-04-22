@@ -30,9 +30,10 @@ app.use(cors());
 // CopilotKit Node runtime bridges the @copilotkit/react-* frontend
 // (GraphQL/REST CopilotKit protocol) to our Python FastAPI agent exposed via
 // the `copilotkit` Python SDK at PYTHON_AGENT_URL.
+// Note: the runtime exposes a single "default" agent to the React SDK;
+// the Python-side name "provisioning_agent" lives inside that remote endpoint.
 const runtime = new CopilotRuntime({
   remoteEndpoints: [copilotKitEndpoint({ url: PYTHON_AGENT_URL })],
-  defaultAgent: "provisioning_agent",
 });
 
 // EmptyAdapter is fine here because all reasoning happens inside the Python
