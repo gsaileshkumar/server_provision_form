@@ -6,56 +6,105 @@ from langgraph.graph import END, START, StateGraph
 from app.graph.nodes.extractor import extractor
 from app.graph.nodes.intake import intake
 from app.graph.nodes.question_planner import question_planner
+from app.graph.nodes.recommender import recommender
+from app.graph.nodes.reviewer import reviewer
+from app.graph.nodes.submitter import submitter
 from app.graph.nodes.validator import validator
 from app.graph.state import AgentState
 
+_APPROVE_TOKENS = {"approve", "approved", "submit", "yes", "looks good", "lgtm"}
+
+
+def _last_human_content(state: AgentState) -> str:
+    for m in reversed(state.get("messages") or []):
+        if isinstance(m, HumanMessage):
+            return m.content if isinstance(m.content, str) else str(m.content)
+    return ""
+
+
+def _is_approval(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return any(tok == t or t.startswith(tok) for tok in _APPROVE_TOKENS)
+
 
 def _route_after_intake(state: AgentState) -> str:
+    """On a fresh thread, the graph runs intake with no human input — go to
+    the question planner. On a continuing thread, the most recent human
+    message is either an approval (if review is pending) or an answer to a
+    previously-posted question."""
     messages = state.get("messages") or []
-    has_pending = bool(state.get("pending_questions"))
-    last_human = any(isinstance(m, HumanMessage) for m in messages[-1:])
-    if has_pending and last_human:
+    last_is_human = bool(messages) and isinstance(messages[-1], HumanMessage)
+
+    if last_is_human and state.get("review_pending"):
+        if _is_approval(_last_human_content(state)):
+            return "submitter"
+        # Edit request: clear review_pending in the edit_router node.
+        return "edit_router"
+
+    if last_is_human and state.get("pending_questions"):
         return "extractor"
-    return "question_planner"
 
-
-def _route_after_extractor(state: AgentState) -> str:
     return "question_planner"
 
 
 def _route_after_question_planner(state: AgentState) -> str:
     if state.get("pending_questions"):
-        # A new question was added; yield control to the user.
-        return END
+        return END  # wait for the user to answer
     return "validator"
 
 
-def build_graph(checkpointer=None):
-    """Compile and return the M6 scaffold graph.
+def _route_after_validator(state: AgentState) -> str:
+    result = state.get("last_validation") or {}
+    if result.get("errors"):
+        # Validator already surfaced errors; bounce back to the planner so the
+        # user can be re-prompted for whatever they're missing.
+        return END
+    return "reviewer"
 
-    Flow:
-      START → intake → (extractor on human reply | question_planner)
-      extractor → question_planner
-      question_planner → END (if pending question) or → validator → END
-    """
+
+def _edit_router(state: AgentState) -> dict:
+    """Clear review_pending when the user asks for a change after review."""
+    return {"review_pending": False}
+
+
+def build_graph(checkpointer=None):
+    """Mode-A graph (estimate/proposal): guide the user through questions,
+    make recommendations, validate, review with approval gate, submit."""
     g = StateGraph(AgentState)
     g.add_node("intake", intake)
     g.add_node("question_planner", question_planner)
     g.add_node("extractor", extractor)
+    g.add_node("recommender", recommender)
     g.add_node("validator", validator)
+    g.add_node("reviewer", reviewer)
+    g.add_node("submitter", submitter)
+    g.add_node("edit_router", _edit_router)
 
     g.add_edge(START, "intake")
     g.add_conditional_edges(
         "intake",
         _route_after_intake,
-        {"extractor": "extractor", "question_planner": "question_planner"},
+        {
+            "extractor": "extractor",
+            "question_planner": "question_planner",
+            "submitter": "submitter",
+            "edit_router": "edit_router",
+        },
     )
-    g.add_edge("extractor", "question_planner")
+    g.add_edge("extractor", "recommender")
+    g.add_edge("recommender", "question_planner")
     g.add_conditional_edges(
         "question_planner",
         _route_after_question_planner,
         {"validator": "validator", END: END},
     )
-    g.add_edge("validator", END)
+    g.add_conditional_edges(
+        "validator",
+        _route_after_validator,
+        {"reviewer": "reviewer", END: END},
+    )
+    g.add_edge("reviewer", END)  # wait for approval / edit
+    g.add_edge("submitter", END)
+    g.add_edge("edit_router", "question_planner")
 
     return g.compile(checkpointer=checkpointer)

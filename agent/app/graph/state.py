@@ -35,8 +35,9 @@ class AgentState(TypedDict, total=False):
     extracted: dict
     # Populated by validator node after calling /validate.
     last_validation: dict
-    # Populated by reviewer node once review UI is shown.
-    review_approved: Optional[bool]
+    # True while the reviewer has posted a summary and is waiting for an
+    # explicit approval / edit instruction from the user.
+    review_pending: Optional[bool]
     # Populated by submitter node.
     submitted_record: Optional[dict]
     # Terminal marker so the graph can END without requiring a user turn.
