@@ -17,6 +17,8 @@ export default defineConfig({
         target: "http://localhost:5002",
         rewrite: (path) => path.replace(/^\/agent/, ""),
       },
+      // CopilotKit Node runtime — bridge from the React SDK to the Python agent.
+      "/copilotkit": "http://localhost:5003",
     },
   },
 });

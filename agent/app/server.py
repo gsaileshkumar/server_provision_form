@@ -4,6 +4,8 @@ import uuid
 from functools import lru_cache
 from typing import Optional
 
+from copilotkit import CopilotKitRemoteEndpoint, LangGraphAGUIAgent
+from copilotkit.integrations.fastapi import add_fastapi_endpoint
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
@@ -26,6 +28,37 @@ app.add_middleware(
 @lru_cache(maxsize=1)
 def _graph():
     return build_graph(checkpointer=get_checkpointer())
+
+
+# CopilotKit remote endpoint exposes the compiled LangGraph to the
+# @copilotkit/react-* frontend. The frontend's <CopilotKit runtimeUrl=
+# "/agent/copilotkit"> provider speaks to this.
+_copilot_agent = LangGraphAGUIAgent(
+    name="provisioning_agent",
+    description=(
+        "Smart server provisioning assistant. In Mode A (estimate/"
+        "proposal) it drives the conversation to build a record; in "
+        "Mode B (provisioning) it answers questions and edits fields "
+        "only on explicit user instruction."
+    ),
+    graph=_graph(),
+)
+
+# Upstream fix: copilotkit 0.1.87's LangGraphAGUIAgent.dict_repr calls
+# super().dict_repr() but the parent class (ag_ui_langgraph.agent.LangGraphAgent)
+# doesn't implement it. Supply a minimal compatible impl here.
+def _agent_dict_repr(self=_copilot_agent):
+    return {
+        "name": self.name,
+        "description": getattr(self, "description", "") or "",
+        "type": "langgraph_agui",
+    }
+
+
+_copilot_agent.dict_repr = _agent_dict_repr  # type: ignore[method-assign]
+
+_sdk = CopilotKitRemoteEndpoint(agents=[_copilot_agent])
+add_fastapi_endpoint(app, _sdk, "/copilotkit")
 
 
 @app.get("/health")
