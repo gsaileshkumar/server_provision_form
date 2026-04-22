@@ -3,12 +3,12 @@ import cors from "cors";
 import {
   CopilotRuntime,
   copilotRuntimeNodeExpressEndpoint,
-  copilotKitEndpoint,
 } from "@copilotkit/runtime";
+import { LangGraphHttpAgent } from "@copilotkit/runtime/langgraph";
 import { randomUUID } from "crypto";
 
-// CopilotRuntime's default EmptyAdapter is on a blocklist that triggers
-// "No default agent provided" even when we've configured a remote endpoint.
+// CopilotRuntime's EmptyAdapter is on a blocklist that triggers
+// "No default agent provided" even when we've configured an agent.
 // A minimal pass-through adapter with a distinct name is enough: all
 // reasoning is delegated to the Python LangGraph agent.
 class PassThroughAdapter {
@@ -22,22 +22,24 @@ class PassThroughAdapter {
 
 const HOST = process.env.RUNTIME_HOST ?? "0.0.0.0";
 const PORT = Number(process.env.RUNTIME_PORT ?? 5003);
-const PYTHON_AGENT_URL = (process.env.PYTHON_AGENT_URL ?? "http://localhost:5002/copilotkit").replace(/\/+$/, "");
+const PYTHON_AGENT_URL = (
+  process.env.PYTHON_AGENT_URL ?? "http://localhost:5002/agui/provisioning_agent"
+).replace(/\/+$/, "");
 
 const app = express();
 app.use(cors());
 
-// CopilotKit Node runtime bridges the @copilotkit/react-* frontend
-// (GraphQL/REST CopilotKit protocol) to our Python FastAPI agent exposed via
-// the `copilotkit` Python SDK at PYTHON_AGENT_URL.
-// Note: the runtime exposes a single "default" agent to the React SDK;
-// the Python-side name "provisioning_agent" lives inside that remote endpoint.
+// The `agents` config is the supported way to register a remote LangGraph
+// in @copilotkit/runtime 1.56.2. `remoteEndpoints` + `copilotKitEndpoint`
+// is documented but the 1.56 runtime's assignEndpointsToAgents returns {}
+// for CopilotKit endpoints, which falls back to a BuiltInAgent and crashes
+// in resolveModel() with "Unknown provider undefined in undefined/undefined".
 const runtime = new CopilotRuntime({
-  remoteEndpoints: [copilotKitEndpoint({ url: PYTHON_AGENT_URL })],
+  agents: {
+    provisioning_agent: new LangGraphHttpAgent({ url: PYTHON_AGENT_URL }),
+  },
 });
 
-// EmptyAdapter is fine here because all reasoning happens inside the Python
-// LangGraph agent; the runtime just forwards traffic.
 const handler = copilotRuntimeNodeExpressEndpoint({
   endpoint: "/copilotkit",
   runtime,
@@ -51,5 +53,5 @@ app.use(handler);
 
 app.listen(PORT, HOST, () => {
   console.log(`[runtime] listening on http://${HOST}:${PORT}`);
-  console.log(`[runtime] forwarding to Python agent at ${PYTHON_AGENT_URL}`);
+  console.log(`[runtime] forwarding to Python AG-UI agent at ${PYTHON_AGENT_URL}`);
 });
