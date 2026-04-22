@@ -8,8 +8,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
-# uv
-uv.lock
+# uv — uv.lock IS committed for reproducible builds
+# (https://docs.astral.sh/uv/concepts/projects/#project-lockfile)
 
 # Node
 node_modules/
