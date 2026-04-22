@@ -4,11 +4,13 @@ from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.nodes.extractor import extractor
+from app.graph.nodes.field_helper import field_helper
 from app.graph.nodes.intake import intake
 from app.graph.nodes.question_planner import question_planner
 from app.graph.nodes.recommender import recommender
 from app.graph.nodes.reviewer import reviewer
 from app.graph.nodes.submitter import submitter
+from app.graph.nodes.ui_updater import detect_edit, ui_updater
 from app.graph.nodes.validator import validator
 from app.graph.state import AgentState
 
@@ -28,17 +30,25 @@ def _is_approval(text: str) -> bool:
 
 
 def _route_after_intake(state: AgentState) -> str:
-    """On a fresh thread, the graph runs intake with no human input — go to
-    the question planner. On a continuing thread, the most recent human
-    message is either an approval (if review is pending) or an answer to a
-    previously-posted question."""
+    """On a fresh thread, the graph runs intake with no human input. On a
+    continuing thread, the most recent human message is routed based on
+    mode + review state."""
     messages = state.get("messages") or []
     last_is_human = bool(messages) and isinstance(messages[-1], HumanMessage)
+    mode = state.get("mode")
+
+    if mode == "B":
+        if not last_is_human:
+            # Fresh mode-B thread — wait silently for the user.
+            return END
+        text = _last_human_content(state)
+        if detect_edit(text):
+            return "ui_updater"
+        return "field_helper"
 
     if last_is_human and state.get("review_pending"):
         if _is_approval(_last_human_content(state)):
             return "submitter"
-        # Edit request: clear review_pending in the edit_router node.
         return "edit_router"
 
     if last_is_human and state.get("pending_questions"):
@@ -79,6 +89,8 @@ def build_graph(checkpointer=None):
     g.add_node("reviewer", reviewer)
     g.add_node("submitter", submitter)
     g.add_node("edit_router", _edit_router)
+    g.add_node("field_helper", field_helper)
+    g.add_node("ui_updater", ui_updater)
 
     g.add_edge(START, "intake")
     g.add_conditional_edges(
@@ -89,6 +101,9 @@ def build_graph(checkpointer=None):
             "question_planner": "question_planner",
             "submitter": "submitter",
             "edit_router": "edit_router",
+            "field_helper": "field_helper",
+            "ui_updater": "ui_updater",
+            END: END,
         },
     )
     g.add_edge("extractor", "recommender")
@@ -106,5 +121,7 @@ def build_graph(checkpointer=None):
     g.add_edge("reviewer", END)  # wait for approval / edit
     g.add_edge("submitter", END)
     g.add_edge("edit_router", "question_planner")
+    g.add_edge("field_helper", END)
+    g.add_edge("ui_updater", END)  # ack-only; no further action
 
     return g.compile(checkpointer=checkpointer)
