@@ -9,7 +9,7 @@ Web app for producing server provisioning specs across a three-stage workflow (E
 | `backend/` | Flask Form API (Pydantic v2, PyMongo) |
 | `agent/` | FastAPI + LangGraph agent service |
 | `frontend/` | Vite + React + TypeScript UI (form + CopilotKit chat) |
-| `docker-compose.yml` | MongoDB, form API (serves built SPA), agent, CopilotKit runtime |
+| `docker-compose.yml` | MongoDB, form API (serves built SPA + proxies AG-UI), agent |
 
 ## Prerequisites
 
@@ -27,17 +27,16 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The `form-api` image is a multi-stage build: stage 1 compiles the React SPA with Vite, stage 2 copies `dist/` into Flask's `app/static/` folder. Flask serves the SPA at `/`, handles `/api/*` natively, and reverse-proxies `/copilotkit/*` to the Node runtime service.
+The `form-api` image is a multi-stage build: stage 1 compiles the React SPA with Vite, stage 2 copies `dist/` into Flask's `app/static/` folder. Flask serves the SPA at `/`, handles `/api/*` natively, and reverse-proxies `/agui/*` to the Python agent. The React SDK uses `@copilotkit/react-*` with `selfManagedAgents` so it talks AG-UI straight to the Python agent — no Node runtime bridge needed.
 
 Open the app at **http://localhost:5001** once the stack is up.
 
 | Service | URL / port |
 | --- | --- |
-| App (SPA + API) | http://localhost:5001 |
+| App (SPA + API + AG-UI proxy) | http://localhost:5001 |
 | Agent (FastAPI) | http://localhost:5002 |
 | MongoDB | localhost:27017 |
 | Mongo Express (DB UI) | http://localhost:8081 |
-| CopilotKit runtime | internal only (proxied by form-api) |
 
 To run just the databases without rebuilding the app images:
 
@@ -53,10 +52,9 @@ For hot-reloading UI development, run Vite outside Docker:
 cd frontend
 npm install
 npm run dev        # http://localhost:5173
-npm run runtime    # http://localhost:5003 (CopilotKit Node bridge)
 ```
 
-Vite proxies `/api` → `:5001` and `/copilotkit` → `:5003`, so the dev server works against either a Docker or bare-metal Python stack.
+Vite proxies `/api` → `:5001` (Flask) and `/agui` → `:5002` (Python agent), so the dev server works against either a Docker or bare-metal Python stack.
 
 ## Local bare-metal bring-up (without Docker)
 
@@ -72,9 +70,8 @@ cd backend && uv sync && uv run python run.py
 # 3. Agent (port 5002)
 cd agent && uv sync && uv run python run.py
 
-# 4. Frontend (port 5173) + runtime bridge (port 5003) — two terminals
+# 4. Frontend (port 5173)
 cd frontend && npm install && npm run dev
-cd frontend && npm run runtime
 ```
 
 ## Environment variables

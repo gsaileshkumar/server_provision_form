@@ -34,7 +34,7 @@ def create_app() -> Flask:
     app.register_blueprint(catalog_bp)
     app.register_blueprint(summary_bp)
 
-    _register_copilotkit_proxy(app)
+    _register_agui_proxy(app)
     _register_spa(app)
 
     return app
@@ -57,7 +57,7 @@ def _register_spa(app: Flask) -> None:
     def _spa_fallback(path: str):
         # Don't mask unknown API / proxy paths with an HTML shell — leave
         # 404s there so clients see real errors.
-        if path.startswith(("api/", "copilotkit", "health")):
+        if path.startswith(("api/", "agui", "health")):
             return ("Not Found", 404)
         try:
             return send_from_directory(app.static_folder, path)
@@ -67,14 +67,13 @@ def _register_spa(app: Flask) -> None:
             return send_from_directory(app.static_folder, "index.html")
 
 
-def _register_copilotkit_proxy(app: Flask) -> None:
-    """Forward /copilotkit/* to the CopilotKit Node runtime. The runtime is a
-    separate service (frontend/runtime.mjs) because the React SDK speaks
-    CopilotKit's GraphQL/REST protocol which the Node runtime translates to
-    AG-UI before reaching the Python agent."""
+def _register_agui_proxy(app: Flask) -> None:
+    """Forward /agui/* to the Python agent's AG-UI endpoint. The React SDK
+    talks AG-UI directly via @ag-ui/client's HttpAgent (configured through
+    <CopilotKit selfManagedAgents>), so there is no Node bridge in between."""
 
-    runtime_url = os.environ.get(
-        "COPILOTKIT_RUNTIME_URL", "http://localhost:5003/copilotkit"
+    agent_url = os.environ.get(
+        "AGENT_AGUI_URL", "http://localhost:5002/agui"
     ).rstrip("/")
 
     # Headers we must not forward verbatim — hop-by-hop per RFC 7230 plus
@@ -94,16 +93,16 @@ def _register_copilotkit_proxy(app: Flask) -> None:
     }
 
     @app.route(
-        "/copilotkit",
+        "/agui",
         defaults={"subpath": ""},
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     )
     @app.route(
-        "/copilotkit/<path:subpath>",
+        "/agui/<path:subpath>",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     )
-    def _copilotkit_proxy(subpath: str):
-        target = f"{runtime_url}/{subpath}" if subpath else runtime_url
+    def _agui_proxy(subpath: str):
+        target = f"{agent_url}/{subpath}" if subpath else agent_url
         fwd_headers = {
             k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP
         }

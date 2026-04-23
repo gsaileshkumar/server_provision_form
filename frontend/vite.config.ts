@@ -13,12 +13,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": "http://localhost:5001",
-      "/agent": {
-        target: "http://localhost:5002",
-        rewrite: (path) => path.replace(/^\/agent/, ""),
-      },
-      // CopilotKit Node runtime — bridge from the React SDK to the Python agent.
-      "/copilotkit": "http://localhost:5003",
+      // AG-UI endpoint served by the Python agent service.
+      "/agui": "http://localhost:5002",
     },
   },
 });

@@ -47,8 +47,8 @@ services:
       MONGO_URI: mongodb://mongo:27017
       FORM_API_HOST: "0.0.0.0"
       FORM_API_PORT: "5001"
-      # Flask proxies /copilotkit/* here on-demand, so no startup dependency.
-      COPILOTKIT_RUNTIME_URL: http://runtime:5003/copilotkit
+      # Flask proxies /agui/* here on-demand, so no startup dependency.
+      AGENT_AGUI_URL: http://agent:5002/agui
 
   agent:
     build:
@@ -70,23 +70,6 @@ services:
       AGENT_HOST: "0.0.0.0"
       AGENT_PORT: "5002"
       FORM_API_URL: http://form-api:5001
-
-  runtime:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: sp_runtime
-    restart: unless-stopped
-    depends_on:
-      agent:
-        condition: service_started
-    # Port exposure optional — Flask reverse-proxies this service.
-    expose:
-      - "5003"
-    environment:
-      RUNTIME_HOST: "0.0.0.0"
-      RUNTIME_PORT: "5003"
-      PYTHON_AGENT_URL: http://agent:5002/agui/provisioning_agent
 
 volumes:
   mongo_data:
