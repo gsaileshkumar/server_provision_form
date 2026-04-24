@@ -31,15 +31,16 @@ def get_llm() -> BaseChatModel:
     if not api_key:
         raise LLMConfigError("LLM_API_KEY is required.")
 
+    timeout = int(os.environ.get("LLM_TIMEOUT", "30"))
     provider = provider.lower()
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(model=model, api_key=api_key, temperature=0)
+        return ChatAnthropic(model=model, api_key=api_key, temperature=0, timeout=timeout)
     if provider == "openai":
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(model=model, api_key=api_key, temperature=0)
+        return ChatOpenAI(model=model, api_key=api_key, temperature=0, timeout=timeout)
 
     raise LLMConfigError(
         f"Unknown LLM_PROVIDER {provider!r}. Supported: anthropic, openai."
