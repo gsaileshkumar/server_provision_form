@@ -13,12 +13,10 @@ dependencies = [
     "langgraph>=0.2",
     "langgraph-checkpoint-mongodb>=0.1",
     "langchain-core>=0.3",
+    "langchain-anthropic>=0.2",
+    "langchain-openai>=0.2",
     "copilotkit>=0.1.30",
 ]
-
-[project.optional-dependencies]
-anthropic = ["langchain-anthropic>=0.2"]
-openai = ["langchain-openai>=0.2"]
 
 [build-system]
 requires = ["hatchling"]

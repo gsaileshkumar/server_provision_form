@@ -1,0 +1,127 @@
+{
+  "osFamilies": [
+    {
+      "family": "Linux",
+      "distributions": [
+        {
+          "distribution": "Ubuntu",
+          "label": "Ubuntu",
+          "requiresLicense": false,
+          "versions": [
+            { "version": "22.04", "label": "Ubuntu 22.04 LTS" },
+            { "version": "24.04", "label": "Ubuntu 24.04 LTS" }
+          ]
+        },
+        {
+          "distribution": "RHEL",
+          "label": "Red Hat Enterprise Linux",
+          "requiresLicense": true,
+          "versions": [
+            { "version": "8", "label": "RHEL 8" },
+            { "version": "9", "label": "RHEL 9" }
+          ]
+        },
+        {
+          "distribution": "Debian",
+          "label": "Debian",
+          "requiresLicense": false,
+          "versions": [
+            { "version": "12", "label": "Debian 12" }
+          ]
+        }
+      ]
+    },
+    {
+      "family": "Windows",
+      "distributions": [
+        {
+          "distribution": "WindowsServer",
+          "label": "Windows Server",
+          "requiresLicense": true,
+          "versions": [
+            { "version": "2019", "label": "Windows Server 2019" },
+            { "version": "2022", "label": "Windows Server 2022" }
+          ]
+        }
+      ]
+    }
+  ],
+  "applications": [
+    {
+      "category": "database",
+      "name": "PostgreSQL",
+      "label": "PostgreSQL",
+      "availableVersions": ["14", "15", "16"],
+      "availableEditions": ["Community"]
+    },
+    {
+      "category": "database",
+      "name": "MySQL",
+      "label": "MySQL",
+      "availableVersions": ["8.0", "8.4"],
+      "availableEditions": ["Community", "Enterprise"]
+    },
+    {
+      "category": "database",
+      "name": "MongoDB",
+      "label": "MongoDB",
+      "availableVersions": ["6.0", "7.0"],
+      "availableEditions": ["Community", "Enterprise"]
+    },
+    {
+      "category": "web server",
+      "name": "Nginx",
+      "label": "Nginx",
+      "availableVersions": ["1.24", "1.26"],
+      "availableEditions": ["Community"]
+    },
+    {
+      "category": "web server",
+      "name": "Apache",
+      "label": "Apache HTTP Server",
+      "availableVersions": ["2.4"],
+      "availableEditions": ["Community"]
+    },
+    {
+      "category": "app runtime",
+      "name": "Node.js",
+      "label": "Node.js",
+      "availableVersions": ["18", "20", "22"],
+      "availableEditions": ["Community"]
+    },
+    {
+      "category": "app runtime",
+      "name": "Python",
+      "label": "Python",
+      "availableVersions": ["3.11", "3.12"],
+      "availableEditions": ["Community"]
+    },
+    {
+      "category": "cache",
+      "name": "Redis",
+      "label": "Redis",
+      "availableVersions": ["7.0", "7.2"],
+      "availableEditions": ["Community", "Enterprise"]
+    },
+    {
+      "category": "message queue",
+      "name": "RabbitMQ",
+      "label": "RabbitMQ",
+      "availableVersions": ["3.12", "3.13"],
+      "availableEditions": ["Community"]
+    },
+    {
+      "category": "monitoring",
+      "name": "Prometheus",
+      "label": "Prometheus",
+      "availableVersions": ["2.50", "2.54"],
+      "availableEditions": ["Community"]
+    }
+  ],
+  "hardware": {
+    "storageTypes": ["HDD", "SSD", "NVMe"],
+    "raidLevels": ["none", "1", "5", "10"],
+    "networkBandwidths": [1, 10, 25, 40],
+    "redundancy": ["none", "active-passive", "active-active"]
+  }
+}

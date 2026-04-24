@@ -9,6 +9,7 @@ dependencies = [
     "pymongo>=4.7",
     "pydantic>=2.7",
     "python-dotenv>=1.0",
+    "requests>=2.32",
 ]
 
 [build-system]
@@ -17,3 +18,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[dependency-groups]
+dev = [
+    "mongomock>=4.3.0",
+]

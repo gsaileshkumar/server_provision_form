@@ -1,0 +1,109 @@
+{
+  "entries": [
+    {
+      "appName": "PostgreSQL",
+      "appVersion": "14",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Debian 12", "RHEL 8", "RHEL 9"]
+    },
+    {
+      "appName": "PostgreSQL",
+      "appVersion": "15",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Ubuntu 24.04", "Debian 12", "RHEL 9"]
+    },
+    {
+      "appName": "PostgreSQL",
+      "appVersion": "16",
+      "supportedOSDistributions": ["Ubuntu 24.04", "Debian 12", "RHEL 9"]
+    },
+    {
+      "appName": "MySQL",
+      "appVersion": "8.0",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Ubuntu 24.04", "Debian 12", "RHEL 8", "RHEL 9", "Windows Server 2019", "Windows Server 2022"]
+    },
+    {
+      "appName": "MySQL",
+      "appVersion": "8.4",
+      "supportedOSDistributions": ["Ubuntu 24.04", "Debian 12", "RHEL 9", "Windows Server 2022"]
+    },
+    {
+      "appName": "MongoDB",
+      "appVersion": "6.0",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Debian 12", "RHEL 8", "RHEL 9"]
+    },
+    {
+      "appName": "MongoDB",
+      "appVersion": "7.0",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Ubuntu 24.04", "Debian 12", "RHEL 9"]
+    },
+    {
+      "appName": "Nginx",
+      "appVersion": "1.24",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Debian 12", "RHEL 8", "RHEL 9"]
+    },
+    {
+      "appName": "Nginx",
+      "appVersion": "1.26",
+      "supportedOSDistributions": ["Ubuntu 24.04", "Debian 12", "RHEL 9"]
+    },
+    {
+      "appName": "Apache",
+      "appVersion": "2.4",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Ubuntu 24.04", "Debian 12", "RHEL 8", "RHEL 9", "Windows Server 2019", "Windows Server 2022"]
+    },
+    {
+      "appName": "Node.js",
+      "appVersion": "18",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Debian 12", "RHEL 8", "RHEL 9", "Windows Server 2019", "Windows Server 2022"]
+    },
+    {
+      "appName": "Node.js",
+      "appVersion": "20",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Ubuntu 24.04", "Debian 12", "RHEL 9", "Windows Server 2022"]
+    },
+    {
+      "appName": "Node.js",
+      "appVersion": "22",
+      "supportedOSDistributions": ["Ubuntu 24.04", "Debian 12", "RHEL 9", "Windows Server 2022"]
+    },
+    {
+      "appName": "Python",
+      "appVersion": "3.11",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Ubuntu 24.04", "Debian 12", "RHEL 8", "RHEL 9"]
+    },
+    {
+      "appName": "Python",
+      "appVersion": "3.12",
+      "supportedOSDistributions": ["Ubuntu 24.04", "Debian 12", "RHEL 9"]
+    },
+    {
+      "appName": "Redis",
+      "appVersion": "7.0",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Debian 12", "RHEL 8", "RHEL 9"]
+    },
+    {
+      "appName": "Redis",
+      "appVersion": "7.2",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Ubuntu 24.04", "Debian 12", "RHEL 9"]
+    },
+    {
+      "appName": "RabbitMQ",
+      "appVersion": "3.12",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Debian 12", "RHEL 8", "RHEL 9"]
+    },
+    {
+      "appName": "RabbitMQ",
+      "appVersion": "3.13",
+      "supportedOSDistributions": ["Ubuntu 24.04", "Debian 12", "RHEL 9"]
+    },
+    {
+      "appName": "Prometheus",
+      "appVersion": "2.50",
+      "supportedOSDistributions": ["Ubuntu 22.04", "Debian 12", "RHEL 8", "RHEL 9"]
+    },
+    {
+      "appName": "Prometheus",
+      "appVersion": "2.54",
+      "supportedOSDistributions": ["Ubuntu 24.04", "Debian 12", "RHEL 9"]
+    }
+  ]
+}
