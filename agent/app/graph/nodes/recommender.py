@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -34,6 +36,39 @@ def _suggest(workload: str, users: int) -> dict[str, int] | None:
     return {"cpuCores": cpu, "ramGb": ram, "primaryStorageGb": storage}
 
 
+def _llm_recommendation(workload: str, users: int, suggestion: dict) -> str | None:
+    """Ask the LLM to explain the hardware recommendation in plain English."""
+    if not os.environ.get("LLM_PROVIDER"):
+        return None
+    try:
+        from app.llm import get_llm
+        llm = get_llm()
+    except Exception:
+        return None
+
+    system = (
+        "You are a server provisioning assistant. The user just provided their workload type "
+        "and expected concurrent user count. Hardware recommendations have been calculated. "
+        "Write a brief, friendly explanation (2-3 sentences) of why these specs make sense "
+        "for this workload and scale. Tell the user they can override any value. "
+        "Never output raw JSON or technical field names."
+    )
+    user_content = (
+        f"Workload type: {workload}\n"
+        f"Expected concurrent users: {users}\n"
+        f"Recommended specs: {json.dumps(suggestion)}"
+    )
+    try:
+        resp = llm.invoke([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ])
+        content = resp.content if hasattr(resp, "content") else str(resp)
+        return (content if isinstance(content, str) else str(content)).strip() or None
+    except Exception:
+        return None
+
+
 def recommender(state: AgentState) -> dict:
     record_id = state.get("record_id")
     if not record_id:
@@ -61,15 +96,12 @@ def recommender(state: AgentState) -> dict:
     with FormApi() as api:
         api.update_record(record_id, {"hardware": patch_hw})
 
-    fields = ", ".join(f"{k}={v}" for k, v in patch_hw.items())
-    return {
-        "messages": [
-            AIMessage(
-                content=(
-                    f"Based on a {workload} workload for ~{users} users, I've "
-                    f"suggested: {fields}. You can override any of these as we "
-                    f"continue."
-                )
-            )
-        ]
-    }
+    msg = _llm_recommendation(workload, int(users), patch_hw)
+    if not msg:
+        fields = ", ".join(f"{k}={v}" for k, v in patch_hw.items())
+        msg = (
+            f"Based on a {workload} workload for ~{users} users, I've "
+            f"suggested: {fields}. You can override any of these as we continue."
+        )
+
+    return {"messages": [AIMessage(content=msg)]}

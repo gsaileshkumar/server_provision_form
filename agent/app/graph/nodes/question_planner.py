@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -132,6 +134,44 @@ def _first_missing(record: dict, required: list[str]) -> str | None:
     return None
 
 
+def _llm_question(record: dict, missing: str, meta: dict) -> str | None:
+    """Ask the LLM to generate a context-aware question for the next missing field."""
+    if not os.environ.get("LLM_PROVIDER"):
+        return None
+    try:
+        from app.llm import get_llm
+        llm = get_llm()
+    except Exception:
+        return None
+
+    options_hint = (
+        f"Valid options are: {', '.join(meta['options'])}." if meta.get("options") else ""
+    )
+    record_json = json.dumps(record, default=str, indent=2)
+    system = (
+        "You are a server provisioning assistant collecting configuration details one field at a time. "
+        "Generate a single natural, conversational question to collect the next missing field. "
+        "Use the current configuration context to make the question relevant and helpful. "
+        "Be concise (1-2 sentences). If there are valid options, mention them naturally at the end. "
+        "Never output JSON, raw field paths, or technical identifiers."
+    )
+    user_content = (
+        f"Current configuration so far:\n{record_json}\n\n"
+        f"Next field to collect: {missing}\n"
+        f"Fallback question: {meta['prompt']}\n"
+        f"{options_hint}"
+    )
+    try:
+        resp = llm.invoke([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ])
+        content = resp.content if hasattr(resp, "content") else str(resp)
+        return (content if isinstance(content, str) else str(content)).strip() or None
+    except Exception:
+        return None
+
+
 def question_planner(state: AgentState) -> dict:
     record_id = state.get("record_id")
     if not record_id:
@@ -154,9 +194,13 @@ def question_planner(state: AgentState) -> dict:
         "kind": meta.get("kind", "text"),
         "options": list(meta.get("options", [])),
     }
-    prompt_text = meta["prompt"]
-    if meta.get("options"):
-        prompt_text += f"  Options: {', '.join(meta['options'])}"
+
+    # LLM-generated question; fall back to the canned prompt if not configured.
+    prompt_text = _llm_question(record, missing, meta)
+    if not prompt_text:
+        prompt_text = meta["prompt"]
+        if meta.get("options"):
+            prompt_text += f"  Options: {', '.join(meta['options'])}"
 
     return {
         "pending_questions": [question],

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+
 from langchain_core.messages import AIMessage
 
 from app.graph.state import AgentState
@@ -64,6 +67,48 @@ def _format_summary(record: dict, pricing: dict) -> str:
     return "\n".join(lines)
 
 
+def _llm_review(record: dict, pricing: dict) -> str | None:
+    """Ask the LLM to write a conversational pre-submission review."""
+    if not os.environ.get("LLM_PROVIDER"):
+        return None
+    try:
+        from app.llm import get_llm
+        llm = get_llm()
+    except Exception:
+        return None
+
+    pricing_summary = {
+        "hardwareCost": pricing.get("hardwareCost", 0),
+        "softwareCost": pricing.get("softwareCost", 0),
+        "taxes": pricing.get("taxes", 0),
+        "total": pricing.get("total", 0),
+    }
+    record_json = json.dumps(record, default=str, indent=2)
+    pricing_json = json.dumps(pricing_summary, indent=2)
+
+    system = (
+        "You are a server provisioning assistant presenting a final review before submission. "
+        "Summarize the server configuration in clear, friendly markdown with section headers. "
+        "Include hardware specs, OS details, applications, and the cost breakdown. "
+        "Highlight anything notable (e.g. high storage, GPU, RAID level). "
+        "End by asking the user to reply 'approve' to submit and lock, or to describe any changes. "
+        "Never output raw JSON or internal field path names."
+    )
+    user_content = (
+        f"Record to review:\n{record_json}\n\n"
+        f"Pricing:\n{pricing_json}"
+    )
+    try:
+        resp = llm.invoke([
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ])
+        content = resp.content if hasattr(resp, "content") else str(resp)
+        return (content if isinstance(content, str) else str(content)).strip() or None
+    except Exception:
+        return None
+
+
 def reviewer(state: AgentState) -> dict:
     record_id = state.get("record_id")
     if not record_id:
@@ -73,7 +118,7 @@ def reviewer(state: AgentState) -> dict:
         record = api.get_record(record_id)
         pricing = api.compute_pricing(record_id)
 
-    msg = _format_summary(record, pricing)
+    msg = _llm_review(record, pricing) or _format_summary(record, pricing)
     return {
         "review_pending": True,
         "messages": [AIMessage(content=msg)],
