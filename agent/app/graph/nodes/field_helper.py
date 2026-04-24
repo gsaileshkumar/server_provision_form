@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -16,45 +17,66 @@ def _last_human_text(messages: list) -> str:
     return ""
 
 
-def _quick_answer(question: str, record: dict, catalog: dict, compatibility: dict, pricing: dict) -> str | None:
-    """Hard-coded answers for a few common questions so Mode B works usefully
-    even when no LLM is configured."""
-    q = question.lower()
-    if "pricing" in q or "price" in q or "cost" in q or "total" in q:
-        return (
-            f"Current estimate: hardware ${pricing.get('hardwareCost', 0):.2f}, "
-            f"software ${pricing.get('softwareCost', 0):.2f}, "
-            f"taxes ${pricing.get('taxes', 0):.2f}, total **${pricing.get('total', 0):.2f}**."
+def _build_system_context(
+    record: dict, catalog: dict, compatibility: dict, pricing: dict
+) -> str:
+    """Package the record + pricing + compatibility snapshot so the LLM has
+    everything it needs to answer Mode-B questions without guessing."""
+    os_info = record.get("softwareOS") or {}
+    distro = os_info.get("osDistribution")
+    version = os_info.get("osVersion")
+
+    # Narrow the compatibility list to entries relevant to the current OS
+    # (full matrix is noisy).
+    relevant_compat: list[dict] = []
+    if distro and version:
+        label = (
+            f"Windows Server {version}"
+            if distro == "WindowsServer"
+            else f"{distro} {version}"
         )
-    if "raid" in q:
-        return (
-            "RAID options: 'none' (single disk), '1' (mirror, good for durability), "
-            "'5' (parity across 3+ disks, balanced read/capacity), '10' (stripe of mirrors, "
-            "best for databases that need both redundancy and write throughput)."
-        )
-    if "compatib" in q or "support" in q:
-        os_info = record.get("softwareOS") or {}
-        distro = os_info.get("osDistribution")
-        version = os_info.get("osVersion")
-        if distro and version:
-            label = f"Windows Server {version}" if distro == "WindowsServer" else f"{distro} {version}"
-            supported = [
-                e for e in compatibility.get("entries", [])
-                if label in e.get("supportedOSDistributions", [])
-            ]
-            names = ", ".join(f"{e['appName']} {e['appVersion']}" for e in supported[:8])
-            return (
-                f"Apps that list {label} as supported include: {names}."
-                if supported else
-                f"No compatibility entries list {label} as supported. Double-check app versions."
-            )
-    return None
+        relevant_compat = [
+            e
+            for e in compatibility.get("entries", [])
+            if label in e.get("supportedOSDistributions", [])
+        ][:20]
+
+    pricing_summary = {
+        "hardwareCost": pricing.get("hardwareCost", 0),
+        "softwareCost": pricing.get("softwareCost", 0),
+        "taxes": pricing.get("taxes", 0),
+        "total": pricing.get("total", 0),
+    }
+
+    record_json = json.dumps(record, default=str, indent=2)
+    pricing_json = json.dumps(pricing_summary, indent=2)
+    compat_json = json.dumps(relevant_compat, indent=2) if relevant_compat else "[]"
+
+    return (
+        "You are a read-only provisioning assistant helping the user review "
+        "their server configuration in Mode B (provisioning stage). Answer "
+        "their question clearly and concisely using ONLY the data provided "
+        "below.\n\n"
+        "Rules:\n"
+        "- Do not instruct the user to change fields unless they explicitly "
+        "asked for a recommendation.\n"
+        "- Never output JSON or raw field paths.\n"
+        "- For pricing questions, quote the totals below (US dollars).\n"
+        "- For compatibility questions, only claim support if the app is in "
+        "the relevant compatibility list.\n"
+        "- For RAID / storage / sizing questions, explain trade-offs in plain "
+        "English.\n\n"
+        f"Current record:\n```\n{record_json}\n```\n\n"
+        f"Current pricing:\n```\n{pricing_json}\n```\n\n"
+        f"Apps compatible with the selected OS ({distro} {version}):\n"
+        f"```\n{compat_json}\n```"
+    )
 
 
 def field_helper(state: AgentState) -> dict:
-    """Mode B read-only helper. Answers the user's question using catalog +
-    compatibility + pricing data; falls back to an LLM if one is configured
-    and no quick answer matches."""
+    """Mode B read-only helper. Always calls the LLM with the full record,
+    pricing, and OS-filtered compatibility snapshot as system context. If no
+    LLM is configured, returns a pointer message."""
     record_id = state.get("record_id")
     if not record_id:
         return {"messages": [AIMessage(content="No record loaded yet.")]}
@@ -67,37 +89,29 @@ def field_helper(state: AgentState) -> dict:
         compatibility = api.get_compatibility()
         pricing = api.compute_pricing(record_id)
 
-    answer = _quick_answer(question, record, catalog, compatibility, pricing)
-    if answer is None and os.environ.get("LLM_PROVIDER"):
-        try:
-            from app.llm import get_llm
-
-            llm = get_llm()
-            context = (
-                f"You are a read-only provisioning assistant. The current record is:\n"
-                f"{record}\n\n"
-                f"Compatibility matrix has {len(compatibility.get('entries', []))} entries. "
-                f"Current pricing total is ${pricing.get('total', 0):.2f}.\n\n"
-                f"Answer the user's question about their server configuration "
-                f"concisely. Do NOT instruct the user to change fields unless "
-                f"they explicitly asked for a recommendation. Never output JSON."
-            )
-            resp = llm.invoke([
-                {"role": "system", "content": context},
-                {"role": "user", "content": question},
-            ])
-            content = resp.content if hasattr(resp, "content") else str(resp)
-            answer = content if isinstance(content, str) else str(content)
-        except Exception as e:
-            answer = f"I couldn't consult the LLM: {e}"
-
-    if answer is None:
+    if not os.environ.get("LLM_PROVIDER"):
         answer = (
-            "I can answer questions about your current configuration, pricing, "
-            "compatibility, or RAID/storage trade-offs. Try asking something "
-            "like \"what's the total cost?\" or \"is PostgreSQL 16 compatible with "
-            "Ubuntu 22.04?\""
+            "No LLM is configured (set LLM_PROVIDER, LLM_MODEL, LLM_API_KEY). "
+            "Once configured, I can answer questions about your current "
+            "configuration, pricing, compatibility, and hardware trade-offs."
         )
+        return {"messages": [AIMessage(content=answer)]}
+
+    try:
+        from app.llm import get_llm
+
+        llm = get_llm()
+        system = _build_system_context(record, catalog, compatibility, pricing)
+        resp = llm.invoke(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": question},
+            ]
+        )
+        content = resp.content if hasattr(resp, "content") else str(resp)
+        answer = content if isinstance(content, str) else str(content)
+    except Exception as e:
+        answer = f"I couldn't consult the LLM: {type(e).__name__}: {e}"
 
     return {"messages": [AIMessage(content=answer)]}
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 import uuid
 from functools import lru_cache
 from typing import Optional
@@ -8,6 +10,7 @@ from ag_ui_langgraph import LangGraphAgent
 from ag_ui_langgraph.endpoint import add_langgraph_fastapi_endpoint
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
 
@@ -53,6 +56,46 @@ add_langgraph_fastapi_endpoint(app, _agui_agent, path="/agui/provisioning_agent"
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "agent"}
+
+
+@app.get("/llm/ping")
+def llm_ping():
+    """Smoke-test the configured LLM end-to-end. Calls get_llm().invoke([...])
+    with a trivial prompt so the user can confirm their LLM_PROVIDER /
+    LLM_MODEL / LLM_API_KEY env vars work without driving a full chat
+    conversation. Surfaces in the provider's usage dashboard."""
+    provider = os.environ.get("LLM_PROVIDER")
+    model = os.environ.get("LLM_MODEL")
+    try:
+        from app.llm import get_llm
+
+        llm = get_llm()
+        start = time.perf_counter()
+        resp = llm.invoke(
+            [
+                {"role": "system", "content": "Respond with exactly one word: pong"},
+                {"role": "user", "content": "ping"},
+            ]
+        )
+        latency_ms = round((time.perf_counter() - start) * 1000)
+        content = resp.content if hasattr(resp, "content") else str(resp)
+        return {
+            "status": "ok",
+            "provider": provider,
+            "model": model,
+            "response": content if isinstance(content, str) else str(content),
+            "latency_ms": latency_ms,
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "provider": provider,
+                "model": model,
+                "error": f"{type(e).__name__}: {e}",
+            },
+        )
 
 
 class StartRequest(BaseModel):
