@@ -1,5 +1,5 @@
 # ---- Stage 1: build the React SPA ----
-FROM node:20-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 
 WORKDIR /build
 

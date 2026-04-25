@@ -1,0 +1,6 @@
+GET http://localhost:5001/health HTTP/1.1
+
+GET http://form-api:5001/api/records HTTP/1.1
+
+GET http://localhost:5002/health HTTP/1.1
+GET http://localhost:5002/llm/ping HTTP/1.1

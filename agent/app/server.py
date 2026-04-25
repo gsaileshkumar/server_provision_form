@@ -97,83 +97,85 @@ def llm_ping():
             },
         )
 
-
-class StartRequest(BaseModel):
-    stage: str = "estimate"
-    record_id: Optional[str] = None
-    record_name: Optional[str] = None
-
-
-class StartResponse(BaseModel):
-    thread_id: str
-    state: dict
-
-
-class MessageRequest(BaseModel):
-    content: str
-
-
-class AgentTurn(BaseModel):
-    thread_id: Optional[str] = None
-    messages: list[dict]
-    record_id: Optional[str] = None
-    stage: Optional[str] = None
-    mode: Optional[str] = None
-    last_validation: Optional[dict] = None
-    pending_questions: list[dict] = []
-
-
-def _serialize_messages(messages: list) -> list[dict]:
-    out = []
-    for m in messages:
-        if isinstance(m, HumanMessage):
-            out.append({"role": "user", "content": m.content})
-        elif isinstance(m, AIMessage):
-            out.append({"role": "assistant", "content": m.content})
-        else:
-            out.append({"role": getattr(m, "type", "system"), "content": getattr(m, "content", "")})
-    return out
-
-
-def _snapshot_to_turn(snapshot) -> AgentTurn:
-    values: AgentState = snapshot.values  # type: ignore[assignment]
-    return AgentTurn(
-        messages=_serialize_messages(values.get("messages", [])),
-        record_id=values.get("record_id"),
-        stage=values.get("stage"),
-        mode=values.get("mode"),
-        last_validation=values.get("last_validation"),
-        pending_questions=list(values.get("pending_questions") or []),
-    )
-
-
-@app.post("/threads/start", response_model=AgentTurn)
-def start_thread(req: StartRequest):
-    thread_id = str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
-    initial: AgentState = {
-        "stage": req.stage,  # type: ignore[typeddict-item]
-        "record_id": req.record_id,
-        "record_name": req.record_name,
-    }
-    _graph().invoke(initial, config=config)
-    snap = _graph().get_state(config)
-    turn = _snapshot_to_turn(snap)
-    turn.thread_id = thread_id
-    return turn
-
-
-@app.post("/threads/{thread_id}/message", response_model=AgentTurn)
-def send_message(thread_id: str, req: MessageRequest):
-    config = {"configurable": {"thread_id": thread_id}}
-    _graph().invoke(
-        {"messages": [HumanMessage(content=req.content)]},
-        config=config,
-    )
-    return _snapshot_to_turn(_graph().get_state(config))
-
-
-@app.get("/threads/{thread_id}", response_model=AgentTurn)
-def get_thread(thread_id: str):
-    config = {"configurable": {"thread_id": thread_id}}
-    return _snapshot_to_turn(_graph().get_state(config))
+#
+# class StartRequest(BaseModel):
+#     stage: str = "estimate"
+#     record_id: Optional[str] = None
+#     record_name: Optional[str] = None
+#
+#
+# class StartResponse(BaseModel):
+#     thread_id: str
+#     state: dict
+#
+#
+# class MessageRequest(BaseModel):
+#     content: str
+#
+#
+# class AgentTurn(BaseModel):
+#     thread_id: Optional[str] = None
+#     messages: list[dict]
+#     record_id: Optional[str] = None
+#     stage: Optional[str] = None
+#     mode: Optional[str] = None
+#     last_validation: Optional[dict] = None
+#     pending_questions: list[dict] = []
+#     pending_batch: Optional[dict] = None
+#
+#
+# def _serialize_messages(messages: list) -> list[dict]:
+#     out = []
+#     for m in messages:
+#         if isinstance(m, HumanMessage):
+#             out.append({"role": "user", "content": m.content})
+#         elif isinstance(m, AIMessage):
+#             out.append({"role": "assistant", "content": m.content})
+#         else:
+#             out.append({"role": getattr(m, "type", "system"), "content": getattr(m, "content", "")})
+#     return out
+#
+#
+# def _snapshot_to_turn(snapshot) -> AgentTurn:
+#     values: AgentState = snapshot.values  # type: ignore[assignment]
+#     return AgentTurn(
+#         messages=_serialize_messages(values.get("messages", [])),
+#         record_id=values.get("record_id"),
+#         stage=values.get("stage"),
+#         mode=values.get("mode"),
+#         last_validation=values.get("last_validation"),
+#         pending_questions=list(values.get("pending_questions") or []),
+#         pending_batch=values.get("pending_batch"),
+#     )
+#
+#
+# @app.post("/threads/start", response_model=AgentTurn)
+# def start_thread(req: StartRequest):
+#     thread_id = str(uuid.uuid4())
+#     config = {"configurable": {"thread_id": thread_id}}
+#     initial: AgentState = {
+#         "stage": req.stage,  # type: ignore[typeddict-item]
+#         "record_id": req.record_id,
+#         "record_name": req.record_name,
+#     }
+#     _graph().invoke(initial, config=config)
+#     snap = _graph().get_state(config)
+#     turn = _snapshot_to_turn(snap)
+#     turn.thread_id = thread_id
+#     return turn
+#
+#
+# @app.post("/threads/{thread_id}/message", response_model=AgentTurn)
+# def send_message(thread_id: str, req: MessageRequest):
+#     config = {"configurable": {"thread_id": thread_id}}
+#     _graph().invoke(
+#         {"messages": [HumanMessage(content=req.content)]},
+#         config=config,
+#     )
+#     return _snapshot_to_turn(_graph().get_state(config))
+#
+#
+# @app.get("/threads/{thread_id}", response_model=AgentTurn)
+# def get_thread(thread_id: str):
+#     config = {"configurable": {"thread_id": thread_id}}
+#     return _snapshot_to_turn(_graph().get_state(config))

@@ -7,6 +7,8 @@ from langgraph.graph.message import add_messages
 Mode = Literal["A", "B"]
 Stage = Literal["estimate", "proposal", "provisioning"]
 
+QuestionKind = Literal["select", "multi-select", "number", "text", "boolean"]
+
 
 class Question(TypedDict, total=False):
     """A planned question grouped into structured options where possible."""
@@ -14,7 +16,20 @@ class Question(TypedDict, total=False):
     path: str  # dotted field path, e.g. "hardware.workloadProfile"
     prompt: str  # human-readable prompt
     options: list[str]  # structured options, if any
-    kind: Literal["select", "number", "text", "boolean"]
+    kind: QuestionKind
+    required: bool
+    depends_on: Optional[str]
+
+
+class QuestionBatch(TypedDict, total=False):
+    """A group of semantically related questions rendered as one form."""
+
+    batch_id: str
+    title: str
+    rationale: str
+    questions: list[Question]
+    submitted: bool
+    errors: dict[str, str]  # path -> human-readable error
 
 
 class AgentState(TypedDict, total=False):
@@ -29,6 +44,12 @@ class AgentState(TypedDict, total=False):
     stage: Stage
     record_id: Optional[str]
     record_name: Optional[str]
+    # Mode-A batched question form. While populated, the frontend renders a
+    # generative-UI form and disables free-text chat.
+    pending_batch: Optional[QuestionBatch]
+    last_batch_id: Optional[str]
+    # Legacy single-question list — retained for Mode-B compatibility and the
+    # `/threads/*` REST fallback. Mode-A batched flow does not populate it.
     pending_questions: list[Question]
     # Scratch buffer for field values the user has answered but haven't yet
     # been PATCHed back to the Form API. Kept for debugging.
