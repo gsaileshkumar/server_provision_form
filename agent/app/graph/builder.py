@@ -51,14 +51,26 @@ def _route_after_intake(state: AgentState) -> str:
             return "submitter"
         return "edit_router"
 
-    if last_is_human and state.get("pending_questions"):
+    if last_is_human and (state.get("pending_batch") or state.get("pending_questions")):
         return "extractor"
 
     return "question_planner"
 
 
+def _route_after_extractor(state: AgentState) -> str:
+    """If a batch is still pending after the extractor ran, it means either
+    (a) the submission came back with validation errors, or (b) the user typed
+    free text that the extractor had nothing to do with. Either way we END so
+    the frontend keeps showing the same form rather than overwriting it with
+    a new batch. Only a successful submission (which clears ``pending_batch``)
+    advances into the recommender -> question_planner loop."""
+    if state.get("pending_batch"):
+        return END
+    return "recommender"
+
+
 def _route_after_question_planner(state: AgentState) -> str:
-    if state.get("pending_questions"):
+    if state.get("pending_batch") or state.get("pending_questions"):
         return END  # wait for the user to answer
     return "validator"
 
@@ -106,7 +118,11 @@ def build_graph(checkpointer=None):
             END: END,
         },
     )
-    g.add_edge("extractor", "recommender")
+    g.add_conditional_edges(
+        "extractor",
+        _route_after_extractor,
+        {"recommender": "recommender", END: END},
+    )
     g.add_edge("recommender", "question_planner")
     g.add_conditional_edges(
         "question_planner",

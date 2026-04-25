@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(npx tsc *)",
+      "Bash(python -m py_compile agent/app/graph/state.py agent/app/graph/nodes/question_planner.py agent/app/graph/nodes/extractor.py agent/app/graph/builder.py agent/app/server.py)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(xargs grep *)",
+      "Bash(grep -oE \"useAgent[a-zA-Z]*[^,;\\\\\\(]{0,200}\" C:/Users/gsukh/source_code/server_provision_form/frontend/node_modules/@copilotkit/react-core/dist/v2/index.mjs)",
+      "Bash(grep -oE \"function useAgent[a-zA-Z]*\\\\\\([^\\\\\\)]*\\\\\\)[^\\\\}]{0,500}\" C:/Users/gsukh/source_code/server_provision_form/frontend/node_modules/@copilotkit/react-core/dist/v2/index.mjs)",
+      "Bash(grep -oE \"function \\(useAgent|.{1,30}\\)[A-Za-z]*\\\\\\([^\\)]*\\\\\\)\\\\{[^}]{0,800}\" C:/Users/gsukh/source_code/server_provision_form/frontend/node_modules/@copilotkit/react-core/dist/copilotkit-PzJlPKcU.mjs)",
+      "Bash(grep -onE \"STATE_SNAPSHOT.{1,80}\" C:/Users/gsukh/source_code/server_provision_form/frontend/node_modules/@ag-ui/client/dist/index.mjs)",
+      "Bash(grep -onE \".{0,80}STATE_SNAPSHOT:\\\\{.{1,300}\" C:/Users/gsukh/source_code/server_provision_form/frontend/node_modules/@ag-ui/client/dist/index.mjs)",
+      "Bash(.venv/Scripts/python.exe -c \"from app.graph.builder import build_graph; build_graph\\(\\); print\\('ok'\\)\")",
+      "Bash(jobs -l)"
+    ]
+  }
+}
