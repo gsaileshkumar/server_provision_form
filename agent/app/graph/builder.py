@@ -5,6 +5,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.graph.nodes.extractor import extractor
 from app.graph.nodes.field_helper import field_helper
+from app.graph.nodes.field_inferrer import field_inferrer
 from app.graph.nodes.intake import intake
 from app.graph.nodes.question_planner import question_planner
 from app.graph.nodes.recommender import recommender
@@ -30,16 +31,16 @@ def _is_approval(text: str) -> bool:
 
 
 def _route_after_intake(state: AgentState) -> str:
-    """On a fresh thread, the graph runs intake with no human input. On a
-    continuing thread, the most recent human message is routed based on
-    mode + review state."""
+    """On a fresh thread, intake runs without human input and we go straight
+    to the question_planner. On a continuing thread, the most recent human
+    message is routed based on mode + review state + whether there's a
+    pending a2ui form awaiting an answer."""
     messages = state.get("messages") or []
     last_is_human = bool(messages) and isinstance(messages[-1], HumanMessage)
     mode = state.get("mode")
 
     if mode == "B":
         if not last_is_human:
-            # Fresh mode-B thread — wait silently for the user.
             return END
         text = _last_human_content(state)
         if detect_edit(text):
@@ -51,35 +52,35 @@ def _route_after_intake(state: AgentState) -> str:
             return "submitter"
         return "edit_router"
 
-    if last_is_human and (state.get("pending_batch") or state.get("pending_questions")):
+    if last_is_human and state.get("pending_use_case_question"):
         return "extractor"
 
     return "question_planner"
 
 
 def _route_after_extractor(state: AgentState) -> str:
-    """If a batch is still pending after the extractor ran, it means either
-    (a) the submission came back with validation errors, or (b) the user typed
-    free text that the extractor had nothing to do with. Either way we END so
-    the frontend keeps showing the same form rather than overwriting it with
-    a new batch. Only a successful submission (which clears ``pending_batch``)
-    advances into the recommender -> question_planner loop."""
-    if state.get("pending_batch"):
+    """The extractor always either consumes the pending question (clearing
+    it) or leaves it in place. If it cleared it, advance through the
+    silent inference + recommender chain. If it didn't (the user typed free
+    text), END so the frontend keeps showing the same form."""
+    if state.get("pending_use_case_question"):
         return END
-    return "recommender"
+    return "field_inferrer"
 
 
 def _route_after_question_planner(state: AgentState) -> str:
-    if state.get("pending_batch") or state.get("pending_questions"):
-        return END  # wait for the user to answer
+    if state.get("pending_use_case_question"):
+        return END  # wait for the user to submit the a2ui form
     return "validator"
 
 
 def _route_after_validator(state: AgentState) -> str:
     result = state.get("last_validation") or {}
     if result.get("errors"):
-        # Validator already surfaced errors; bounce back to the planner so the
-        # user can be re-prompted for whatever they're missing.
+        # Validator surfaced errors; END so the user can see them. Their next
+        # turn will route through the planner again, which may ask another
+        # use-case question or skip to validator if nothing else can be
+        # asked.
         return END
     return "reviewer"
 
@@ -90,12 +91,14 @@ def _edit_router(state: AgentState) -> dict:
 
 
 def build_graph(checkpointer=None):
-    """Mode-A graph (estimate/proposal): guide the user through questions,
-    make recommendations, validate, review with approval gate, submit."""
+    """Mode-A graph (estimate/proposal): drive a use-case-driven Q&A,
+    silently infer record fields, validate, review with approval gate,
+    submit. Mode-B routes through field_helper / ui_updater."""
     g = StateGraph(AgentState)
     g.add_node("intake", intake)
     g.add_node("question_planner", question_planner)
     g.add_node("extractor", extractor)
+    g.add_node("field_inferrer", field_inferrer)
     g.add_node("recommender", recommender)
     g.add_node("validator", validator)
     g.add_node("reviewer", reviewer)
@@ -121,8 +124,9 @@ def build_graph(checkpointer=None):
     g.add_conditional_edges(
         "extractor",
         _route_after_extractor,
-        {"recommender": "recommender", END: END},
+        {"field_inferrer": "field_inferrer", END: END},
     )
+    g.add_edge("field_inferrer", "recommender")
     g.add_edge("recommender", "question_planner")
     g.add_conditional_edges(
         "question_planner",
@@ -134,10 +138,10 @@ def build_graph(checkpointer=None):
         _route_after_validator,
         {"reviewer": "reviewer", END: END},
     )
-    g.add_edge("reviewer", END)  # wait for approval / edit
+    g.add_edge("reviewer", END)
     g.add_edge("submitter", END)
     g.add_edge("edit_router", "question_planner")
     g.add_edge("field_helper", END)
-    g.add_edge("ui_updater", END)  # ack-only; no further action
+    g.add_edge("ui_updater", END)
 
     return g.compile(checkpointer=checkpointer)

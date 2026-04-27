@@ -31,9 +31,14 @@ export function RecordList() {
     <main style={mainStyle}>
       <header style={headerStyle}>
         <h1 style={{ margin: 0 }}>Server Provisioning Records</h1>
-        <button onClick={() => setCreating((s) => !s)} style={btnPrimary}>
-          {creating ? "Cancel" : "+ New record"}
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <Link to="/chat" style={btnPrimaryLink}>
+            ✨ Start with agent
+          </Link>
+          <button onClick={() => setCreating((s) => !s)} style={btnSecondary}>
+            {creating ? "Cancel" : "+ New record"}
+          </button>
+        </div>
       </header>
 
       {creating && (
@@ -58,7 +63,7 @@ export function RecordList() {
               <option value="provisioning">Provisioning</option>
             </select>
           </label>
-          <button onClick={createNew} style={btnPrimary}>
+          <button onClick={createNew} style={btnSecondary}>
             Create
           </button>
         </div>
@@ -133,6 +138,19 @@ const btnPrimary: React.CSSProperties = {
   background: "#2e5f8a",
   color: "white",
   border: "none",
+  padding: "0.5rem 1rem",
+  borderRadius: 4,
+  cursor: "pointer",
+};
+const btnPrimaryLink: React.CSSProperties = {
+  ...btnPrimary,
+  textDecoration: "none",
+  display: "inline-block",
+};
+const btnSecondary: React.CSSProperties = {
+  background: "white",
+  color: "#333",
+  border: "1px solid #bbb",
   padding: "0.5rem 1rem",
   borderRadius: 4,
   cursor: "pointer",

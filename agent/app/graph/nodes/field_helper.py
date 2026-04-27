@@ -10,6 +10,142 @@ from app.graph.state import AgentState
 from app.tools.form_api import FormApi
 
 
+# Schema describing the record fields the inferrer / planner reason about.
+# Stays in code (not loaded from the Form API) so the agent has a stable
+# vocabulary for both filling values and judging which use-case questions
+# would unblock the most fields.
+REMAINING_FIELD_SCHEMA: dict[str, dict[str, Any]] = {
+    "hardware.workloadProfile": {
+        "kind": "select",
+        "options": ["web", "database", "app", "analytics", "general-purpose"],
+        "section": "hardware",
+    },
+    "hardware.expectedConcurrentUsers": {"kind": "number", "section": "hardware"},
+    "hardware.cpuCores": {"kind": "number", "section": "hardware"},
+    "hardware.ramGb": {"kind": "number", "section": "hardware"},
+    "hardware.primaryStorageGb": {"kind": "number", "section": "hardware"},
+    "hardware.storageType": {
+        "kind": "select",
+        "options": ["HDD", "SSD", "NVMe"],
+        "section": "hardware",
+    },
+    "hardware.raidLevel": {
+        "kind": "select",
+        "options": ["none", "1", "5", "10"],
+        "section": "hardware",
+    },
+    "hardware.gpuRequired": {"kind": "boolean", "section": "hardware"},
+    "hardware.networkBandwidthGbps": {
+        "kind": "select",
+        "options": ["1", "10", "25", "40"],
+        "section": "hardware",
+    },
+    "hardware.redundancy": {
+        "kind": "select",
+        "options": ["none", "active-passive", "active-active"],
+        "section": "hardware",
+    },
+    "hardware.rackUnits": {"kind": "number", "section": "hardware"},
+    "hardware.powerDrawWatts": {"kind": "number", "section": "hardware"},
+    "softwareOS.osFamily": {
+        "kind": "select",
+        "options": ["Linux", "Windows"],
+        "section": "softwareOS",
+    },
+    "softwareOS.osDistribution": {
+        "kind": "text",
+        "section": "softwareOS",
+        "depends_on": "softwareOS.osFamily",
+    },
+    "softwareOS.osVersion": {
+        "kind": "text",
+        "section": "softwareOS",
+        "depends_on": "softwareOS.osDistribution",
+    },
+    "softwareOS.licensingModel": {
+        "kind": "select",
+        "options": ["BYOL", "included", "subscription"],
+        "section": "softwareOS",
+    },
+    "softwareOS.patchingPolicy": {
+        "kind": "select",
+        "options": ["auto", "manual", "scheduled"],
+        "section": "softwareOS",
+    },
+    "softwareOS.hardeningProfile": {
+        "kind": "select",
+        "options": ["none", "CIS", "custom"],
+        "section": "softwareOS",
+    },
+    "softwareOS.filesystemLayout": {"kind": "text", "section": "softwareOS"},
+    "softwareOS.timezone": {"kind": "text", "section": "softwareOS"},
+    "softwareOS.locale": {"kind": "text", "section": "softwareOS"},
+    "applications[].category": {
+        "kind": "select",
+        "options": [
+            "database",
+            "web server",
+            "app runtime",
+            "cache",
+            "message queue",
+            "monitoring",
+            "custom",
+        ],
+        "section": "applications",
+    },
+    "applications[].name": {"kind": "text", "section": "applications"},
+    "applications[].version": {"kind": "text", "section": "applications"},
+    "applications[].edition": {
+        "kind": "select",
+        "options": ["Community", "Enterprise"],
+        "section": "applications",
+    },
+    "applications[].expectedDataVolumeGb": {"kind": "number", "section": "applications"},
+    "applications[].haConfig": {"kind": "text", "section": "applications"},
+    "applications[].installSource": {
+        "kind": "select",
+        "options": ["package manager", "binary", "container image", "custom URL"],
+        "section": "applications",
+    },
+}
+
+
+def _is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    if isinstance(value, (list, dict)) and len(value) == 0:
+        return True
+    return False
+
+
+def _get(record: dict, path: str) -> Any:
+    obj: Any = record
+    for p in path.split("."):
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            obj = obj.get(p)
+        else:
+            obj = getattr(obj, p, None)
+    return obj
+
+
+def _path_is_blank(record: dict, path: str) -> bool:
+    if path.startswith("applications[]"):
+        sub = path.split(".", 1)[1]
+        apps = record.get("applications") or []
+        if not apps:
+            return True
+        return _is_blank(apps[0].get(sub))
+    return _is_blank(_get(record, path))
+
+
+def missing_field_paths(record: dict, required: list[str]) -> list[str]:
+    return [p for p in required if _path_is_blank(record, p)]
+
+
 def _last_human_text(messages: list) -> str:
     for m in reversed(messages):
         if isinstance(m, HumanMessage):
@@ -26,8 +162,6 @@ def _build_system_context(
     distro = os_info.get("osDistribution")
     version = os_info.get("osVersion")
 
-    # Narrow the compatibility list to entries relevant to the current OS
-    # (full matrix is noisy).
     relevant_compat: list[dict] = []
     if distro and version:
         label = (
@@ -114,7 +248,3 @@ def field_helper(state: AgentState) -> dict:
         answer = f"I couldn't consult the LLM: {type(e).__name__}: {e}"
 
     return {"messages": [AIMessage(content=answer)]}
-
-
-def _summarize_changes(changes: dict[str, Any]) -> str:
-    return ", ".join(f"{k}={v}" for k, v in changes.items())

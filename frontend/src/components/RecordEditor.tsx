@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
-import { ChatPanel } from "@/components/agent/ChatPanel";
 import { HardwareTab } from "@/components/form/HardwareTab";
 import { SoftwareOSTab } from "@/components/form/SoftwareOSTab";
 import { ApplicationsTab } from "@/components/form/ApplicationsTab";
@@ -25,7 +24,6 @@ export function RecordEditor() {
 
   const [tab, setTab] = useState<TabKey>("hardware");
   const [actionMsg, setActionMsg] = useState<string | null>(null);
-  const [chatOpen, setChatOpen] = useState(false);
   useLinkedDefaults();
 
   useEffect(() => {
@@ -34,7 +32,10 @@ export function RecordEditor() {
 
   if (loading || !record) return <main style={mainStyle}>Loading…</main>;
   const locked = record.status === "locked";
-  const agentMode: "A" | "B" = record.stage === "provisioning" ? "B" : "A";
+  const chatHref =
+    record.stage === "provisioning"
+      ? `/chat?recordId=${record._id}&stage=provisioning`
+      : `/chat?recordId=${record._id}&stage=${record.stage}`;
 
   async function onSubmit() {
     if (!record?._id) return;
@@ -120,9 +121,9 @@ export function RecordEditor() {
           <Link to={`/records/${record._id}/summary`} style={btnSecondaryLink}>
             Summary
           </Link>
-          <button onClick={() => setChatOpen((o) => !o)} style={btnSecondary}>
-            {chatOpen ? "Hide agent" : "Open agent"}
-          </button>
+          <Link to={chatHref} style={btnSecondaryLink}>
+            Open agent chat
+          </Link>
         </div>
       </header>
       {error && <p style={{ color: "#c33" }}>{error}</p>}
@@ -150,24 +151,11 @@ export function RecordEditor() {
         ))}
       </nav>
 
-      <div
-        style={
-          chatOpen
-            ? {
-                display: "grid",
-                gap: "1rem",
-                gridTemplateColumns: agentMode === "B" ? "2fr 1fr" : "3fr 2fr",
-              }
-            : { display: "block" }
-        }
-      >
-        <div style={panelStyle}>
-          {tab === "hardware" && <HardwareTab stage={record.stage} locked={locked} />}
-          {tab === "os" && <SoftwareOSTab stage={record.stage} locked={locked} />}
-          {tab === "apps" && <ApplicationsTab stage={record.stage} locked={locked} />}
-          {tab === "review" && <ReviewTab />}
-        </div>
-        {chatOpen ? <ChatPanel mode={agentMode} /> : null}
+      <div style={panelStyle}>
+        {tab === "hardware" && <HardwareTab stage={record.stage} locked={locked} />}
+        {tab === "os" && <SoftwareOSTab stage={record.stage} locked={locked} />}
+        {tab === "apps" && <ApplicationsTab stage={record.stage} locked={locked} />}
+        {tab === "review" && <ReviewTab />}
       </div>
     </main>
   );

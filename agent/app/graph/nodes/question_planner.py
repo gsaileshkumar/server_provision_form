@@ -1,278 +1,214 @@
+"""Use-case-driven question planner using the canonical A2UI pattern.
+
+Adapted from the AG-UI dojo `a2ui_dynamic_schema` example:
+
+  https://dojo.ag-ui.com/langgraph-fastapi/feature/a2ui_dynamic_schema
+
+Key idea: a *secondary* "designer" LLM is bound with a `render_a2ui` tool
+and forced to emit a tool call via ``tool_choice="render_a2ui"``. Forcing
+the tool call gives us strongly-typed output without going through OpenAI's
+strict json_schema mode (which can't express the free-form A2UI component
+tree). We never execute the tool — we read ``response.tool_calls[0]["args"]``
+and wrap them in v0.9 ops via ``copilotkit.a2ui``.
+
+The component schema, generation guidelines, and design guidelines all
+flow from the React frontend (via ``A2UICatalog`` / ``useAgentContext``)
+into ``state["ag-ui"]["context"]`` and ``state["ag-ui"]["a2ui_schema"]``,
+mirroring ``_build_context_prompt`` in the dojo example.
+
+Wire format (no Node middleware in our stack): the planner emits an
+``AIMessage`` with a ``tool_calls`` entry plus a paired ``ToolMessage``
+whose content is ``a2ui.render(ops)`` (a JSON string with the
+``a2ui_operations`` envelope). The frontend parses the latest
+``ToolMessage`` with ``name="render_a2ui"``.
+"""
+
 from __future__ import annotations
 
 import json
 import os
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage
-from pydantic import BaseModel, Field
+from copilotkit import a2ui as ck_a2ui
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import tool as lc_tool
 
-from app.graph.state import AgentState, Question, QuestionBatch
+from app.graph.a2ui_builder import (
+    ALLOWED_COMPONENTS,
+    click_only_rules,
+    fallback_component_schema,
+)
+# `_emit_render_messages` and `_llm_design_question` use copilotkit.a2ui
+# directly to mirror the dojo `a2ui_dynamic_schema` example.
+from app.graph.nodes.field_helper import REMAINING_FIELD_SCHEMA, missing_field_paths
+from app.graph.state import AgentState, UseCaseQuestion
 from app.tools.form_api import FormApi
 
 
-# Labels + structured options for the fields we know about. Fields without an
-# entry here fall through to free-text prompts.
-#
-# ``depends_on`` lets the batched planner avoid asking for a field whose
-# prerequisite is still blank (e.g. don't ask for osDistribution before
-# osFamily is known).
-FIELD_META: dict[str, dict[str, Any]] = {
-    "hardware.workloadProfile": {
-        "prompt": "What's the workload profile for this server?",
-        "kind": "select",
-        "options": ["web", "database", "app", "analytics", "general-purpose"],
-        "section": "hardware",
-    },
-    "hardware.expectedConcurrentUsers": {
-        "prompt": "Roughly how many concurrent users do you expect?",
-        "kind": "number",
-        "section": "hardware",
-    },
-    "hardware.cpuCores": {
-        "prompt": "How many CPU cores?",
-        "kind": "number",
-        "section": "hardware",
-    },
-    "hardware.ramGb": {
-        "prompt": "How much RAM (in GB)?",
-        "kind": "number",
-        "section": "hardware",
-    },
-    "hardware.primaryStorageGb": {
-        "prompt": "How much primary storage (GB)?",
-        "kind": "number",
-        "section": "hardware",
-    },
-    "hardware.storageType": {
-        "prompt": "Which storage type?",
-        "kind": "select",
-        "options": ["HDD", "SSD", "NVMe"],
-        "section": "hardware",
-    },
-    "hardware.raidLevel": {
-        "prompt": "Which RAID level?",
-        "kind": "select",
-        "options": ["none", "1", "5", "10"],
-        "section": "hardware",
-    },
-    "hardware.gpuRequired": {
-        "prompt": "Is a GPU required?",
-        "kind": "boolean",
-        "section": "hardware",
-    },
-    "hardware.networkBandwidthGbps": {
-        "prompt": "Network bandwidth (Gbps)?",
-        "kind": "select",
-        "options": ["1", "10", "25", "40"],
-        "section": "hardware",
-    },
-    "hardware.redundancy": {
-        "prompt": "Which redundancy posture?",
-        "kind": "select",
-        "options": ["none", "active-passive", "active-active"],
-        "section": "hardware",
-    },
-    "hardware.rackUnits": {
-        "prompt": "How many rack units?",
-        "kind": "number",
-        "section": "hardware",
-    },
-    "hardware.powerDrawWatts": {
-        "prompt": "Estimated power draw (watts)?",
-        "kind": "number",
-        "section": "hardware",
-    },
-    "softwareOS.osFamily": {
-        "prompt": "Which OS family?",
-        "kind": "select",
-        "options": ["Linux", "Windows"],
-        "section": "softwareOS",
-    },
-    "softwareOS.osDistribution": {
-        "prompt": "Which distribution?",
-        "kind": "text",
-        "section": "softwareOS",
-        "depends_on": "softwareOS.osFamily",
-    },
-    "softwareOS.osVersion": {
-        "prompt": "Which version?",
-        "kind": "text",
-        "section": "softwareOS",
-        "depends_on": "softwareOS.osDistribution",
-    },
-    "softwareOS.licensingModel": {
-        "prompt": "OS licensing model?",
-        "kind": "select",
-        "options": ["BYOL", "included", "subscription"],
-        "section": "softwareOS",
-    },
-    "softwareOS.patchingPolicy": {
-        "prompt": "Patching policy?",
-        "kind": "select",
-        "options": ["auto", "manual", "scheduled"],
-        "section": "softwareOS",
-    },
-    "softwareOS.hardeningProfile": {
-        "prompt": "Which hardening profile?",
-        "kind": "text",
-        "section": "softwareOS",
-    },
-    "softwareOS.filesystemLayout": {
-        "prompt": "Filesystem layout?",
-        "kind": "text",
-        "section": "softwareOS",
-    },
-    "softwareOS.timezone": {
-        "prompt": "Timezone?",
-        "kind": "text",
-        "section": "softwareOS",
-    },
-    "softwareOS.locale": {
-        "prompt": "Locale?",
-        "kind": "text",
-        "section": "softwareOS",
-    },
-    "applications[].category": {
-        "prompt": "What category is the first application?",
-        "kind": "select",
-        "options": [
-            "database",
-            "web server",
-            "app runtime",
-            "cache",
-            "message queue",
-            "monitoring",
-            "custom",
-        ],
-        "section": "applications",
-    },
-    "applications[].name": {
-        "prompt": "Which application?",
-        "kind": "text",
-        "section": "applications",
-    },
-    "applications[].version": {
-        "prompt": "Which application version?",
-        "kind": "text",
-        "section": "applications",
-    },
-    "applications[].edition": {
-        "prompt": "Which edition?",
-        "kind": "text",
-        "section": "applications",
-    },
-    "applications[].expectedDataVolumeGb": {
-        "prompt": "Expected data volume (GB)?",
-        "kind": "number",
-        "section": "applications",
-    },
-    "applications[].haConfig": {
-        "prompt": "High-availability configuration?",
-        "kind": "text",
-        "section": "applications",
-    },
-    "applications[].installSource": {
-        "prompt": "Install source (repo, tarball, image, etc.)?",
-        "kind": "text",
-        "section": "applications",
-    },
-}
+@lc_tool
+def render_a2ui(
+    surfaceId: str,
+    catalogId: str,
+    intent: str,
+    components: list[dict],
+    data: dict | None = None,
+) -> str:
+    """Render a dynamic A2UI v0.9 surface for a single use-case question.
+
+    Args:
+        surfaceId: Unique surface identifier (e.g. "use-case-question").
+        catalogId: A2UI catalog id, e.g. the basic catalog URL.
+        intent: Short snake_case label for the use-case topic — used to
+            avoid asking the same topic twice (e.g. "uptime_target",
+            "workload_kind", "data_sensitivity").
+        components: A2UI v0.9 component array. Root id MUST be "root".
+        data: Optional initial data model (e.g. ``{"answer": null}`` so
+            input ``value`` paths bind cleanly).
+    """
+    # Body is never executed — we read response.tool_calls[0]["args"] in
+    # the planner. Mirroring the dojo pattern.
+    return "rendered"
 
 
-MAX_BATCH = 5
-MIN_BATCH = 2
-
-
-def _is_blank(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str) and not value.strip():
-        return True
-    if isinstance(value, (list, dict)) and len(value) == 0:
-        return True
-    return False
-
-
-def _get(record: dict, path: str) -> Any:
-    obj: Any = record
-    for p in path.split("."):
-        if obj is None:
-            return None
-        if isinstance(obj, dict):
-            obj = obj.get(p)
-        else:
-            obj = getattr(obj, p, None)
-    return obj
-
-
-def _path_is_blank(record: dict, path: str) -> bool:
-    if path.startswith("applications[]"):
-        sub = path.split(".", 1)[1]
-        apps = record.get("applications") or []
-        if not apps:
-            return True
-        return _is_blank(apps[0].get(sub))
-    return _is_blank(_get(record, path))
-
-
-def _missing_paths(record: dict, required: list[str]) -> list[str]:
-    return [p for p in required if _path_is_blank(record, p)]
-
-
-def _build_question(path: str) -> Question:
-    meta = FIELD_META.get(path, {"prompt": f"Please provide {path}.", "kind": "text"})
-    q: Question = {
-        "path": path,
-        "prompt": meta["prompt"],
-        "kind": meta.get("kind", "text"),
-        "options": list(meta.get("options", [])),
-        "required": True,
-    }
-    if meta.get("depends_on"):
-        q["depends_on"] = meta["depends_on"]
-    return q
+@dataclass
+class _DesignerOutput:
+    intent: str
+    components: list[dict[str, Any]]
+    data: dict[str, Any]
 
 
 def _initial_user_prompt(messages: list) -> str:
     for m in messages or []:
         if isinstance(m, HumanMessage):
-            return m.content if isinstance(m.content, str) else str(m.content)
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            if content.startswith("__A2UI_ACTION__"):
+                continue
+            return content
     return ""
 
 
-def _filter_by_dependencies(record: dict, paths: list[str]) -> list[str]:
-    """Drop any path whose ``depends_on`` field is still blank — so we never
-    ask for osDistribution before osFamily is answered."""
-    out = []
-    for p in paths:
-        dep = FIELD_META.get(p, {}).get("depends_on")
-        if dep and _path_is_blank(record, dep):
+def _validate_components(components: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """Reject component trees that use disallowed components or omit the
+    submit Button. Returns the (unchanged) tree on success, None on failure."""
+    if not isinstance(components, list) or not components:
+        return None
+
+    ok = True
+    saw_submit = False
+
+    def _walk(node: Any) -> None:
+        nonlocal ok, saw_submit
+        if not ok or not isinstance(node, dict):
+            return
+        comp = node.get("component")
+        if comp not in ALLOWED_COMPONENTS:
+            ok = False
+            return
+        if comp == "Button":
+            event = (node.get("action") or {}).get("event") or {}
+            if event.get("name") == "submit":
+                saw_submit = True
+        children = node.get("children")
+        if isinstance(children, list):
+            for c in children:
+                _walk(c)
+        elif isinstance(children, dict):
+            _walk(children)
+
+    for n in components:
+        _walk(n)
+
+    if not ok or not saw_submit:
+        return None
+    return components
+
+
+def _build_context_prompt(state: AgentState) -> str:
+    """Assemble client-supplied context entries — generation guidelines,
+    design guidelines, A2UI component schema — into the secondary LLM's
+    system prompt. Mirrors the dojo's ``_build_context_prompt``.
+    """
+    ag_ui = state.get("ag-ui") if isinstance(state, dict) else None
+    if not isinstance(ag_ui, dict):
+        ag_ui = {}
+
+    parts: list[str] = []
+    for entry in ag_ui.get("context", []) or []:
+        if isinstance(entry, dict):
+            desc = entry.get("description")
+            value = entry.get("value")
+        else:
+            desc = getattr(entry, "description", None)
+            value = getattr(entry, "value", None)
+        if value is None:
             continue
-        out.append(p)
-    return out
+        parts.append(f"## {desc}\n{value}\n" if desc else f"{value}\n")
+
+    schema = ag_ui.get("a2ui_schema")
+    if isinstance(schema, str) and schema.strip():
+        parts.append(f"## Available Components\n{schema}\n")
+    elif not parts:
+        # Bare-curl fallback so the planner stays useful when no React
+        # frontend is mounting A2UICatalog.
+        parts.append(f"## Available Components\n{fallback_component_schema()}\n")
+
+    return "\n".join(parts)
 
 
-class BatchPlan(BaseModel):
-    """Structured LLM output for the batched question planner."""
-
-    title: str = Field(description="Short section title for the form, 2-6 words.")
-    rationale: str = Field(description="One sentence on why these fields are grouped now.")
-    field_paths: list[str] = Field(
-        description="Ordered list of dotted field paths to ask together. "
-                    "Must be 2-5 items and each must be from the provided candidates.",
+def _domain_rules(missing_paths: list[str], use_case_answers: list[dict[str, Any]]) -> str:
+    asked_intents = [a.get("intent") for a in use_case_answers if a.get("intent")]
+    fields_left = [
+        {"path": p, "schema": REMAINING_FIELD_SCHEMA.get(p, {})}
+        for p in missing_paths
+    ]
+    return (
+        "ROLE\n"
+        "You are a server provisioning solutions engineer. Your job is to "
+        "ask ONE high-value follow-up question about the user's use case "
+        "(workload kind, traffic pattern, scale, uptime/SLA target, data "
+        "sensitivity, compliance regime, budget posture, geographic "
+        "distribution, runtime stack, etc.). NEVER ask the user about a "
+        "concrete record field by name like 'how many CPU cores?' or "
+        "'which RAID level?' — those are decided internally based on the "
+        "use-case answer.\n\n"
+        "Pick the next question by considering:\n"
+        " 1. What you still don't know about the use case.\n"
+        " 2. Which still-unfilled record fields could be inferred from the "
+        "answer.\n"
+        " 3. Topics already covered (do not repeat an `intent`).\n\n"
+        f"Click-only constraint (product policy): use ONLY these "
+        f"components from the advertised catalog: "
+        f"{', '.join(ALLOWED_COMPONENTS)}. Do NOT use TextField, "
+        f"DateTimeInput, or any other typing input.\n\n"
+        f"{click_only_rules()}\n\n"
+        "When you call the `render_a2ui` tool, set the arguments as "
+        "follows:\n"
+        " - `surfaceId`: a stable string (e.g. \"use-case-question\").\n"
+        " - `catalogId`: \"https://a2ui.org/specification/v0_9/basic_catalog.json\".\n"
+        " - `intent`: snake_case label for the topic (e.g. uptime_target).\n"
+        " - `components`: the A2UI v0.9 component tree (Card → Column → "
+        "   Text + input + submit Button).\n"
+        " - `data`: {\"answer\": null}.\n\n"
+        f"Topics already asked about (do NOT repeat): "
+        f"{json.dumps(asked_intents)}\n\n"
+        f"Use-case answers gathered so far:\n"
+        f"{json.dumps(use_case_answers, default=str, indent=2)}\n\n"
+        f"Record fields still missing (the planner will silently infer "
+        f"these from the answer downstream):\n"
+        f"{json.dumps(fields_left, default=str, indent=2)[:4000]}"
     )
 
 
-def _llm_plan_batch(
+def _llm_design_question(
+    state: AgentState,
     user_prompt: str,
     record: dict,
-    stage: str,
-    candidates: list[str],
-) -> BatchPlan | None:
-    """Ask the LLM to choose a semantically related batch of 2-5 fields."""
-    if not os.environ.get("LLM_PROVIDER") or not candidates:
+    use_case_answers: list[dict[str, Any]],
+    missing_paths: list[str],
+) -> _DesignerOutput | None:
+    if not os.environ.get("LLM_PROVIDER"):
         return None
     try:
         from app.llm import get_llm
@@ -281,134 +217,71 @@ def _llm_plan_batch(
     except Exception:
         return None
 
-    cand_meta = []
-    for p in candidates:
-        m = FIELD_META.get(p, {})
-        cand_meta.append({
-            "path": p,
-            "prompt": m.get("prompt", p),
-            "kind": m.get("kind", "text"),
-            "section": m.get("section"),
-            "options": m.get("options") or [],
-        })
+    # Force the LLM to emit exactly one render_a2ui tool call. This is the
+    # "structured output via tool_choice" trick from the dojo example —
+    # gives us typed args without OpenAI's strict json_schema mode.
+    try:
+        designer = llm.bind_tools([render_a2ui], tool_choice="render_a2ui")
+    except Exception:
+        # Some providers don't support tool_choice — degrade gracefully.
+        return None
 
-    sys = (
-        "You are a server provisioning assistant deciding which unfilled fields "
-        "to ask the user about *together* in one focused form. "
-        "Pick between 2 and 5 fields that are semantically related AND relevant "
-        "to what the user described in their initial prompt. "
-        "Prefer grouping fields from the same section (hardware, softwareOS, "
-        "applications). Skip fields that obviously don't apply to the user's "
-        "stated use case (e.g. don't include GPU fields for a lightweight "
-        "static web site). Every field_path MUST be copied verbatim from the "
-        "candidates list — do not invent paths."
-    )
+    context_section = _build_context_prompt(state)
+    domain_section = _domain_rules(missing_paths, use_case_answers)
+    system_prompt = f"{context_section}\n\n{domain_section}"
+
     user_content = (
-        f"Stage: {stage}\n"
-        f"Initial user prompt: {user_prompt or '(none)'}\n"
-        f"Current record (partial, JSON):\n{json.dumps(record, default=str)[:4000]}\n\n"
-        f"Candidate unfilled fields:\n{json.dumps(cand_meta, indent=2)}"
+        f"Initial user prompt: {user_prompt or '(none)'}\n\n"
+        f"Current record (partial):\n{json.dumps(record, default=str)[:3000]}"
     )
+
     try:
-        structured = llm.with_structured_output(BatchPlan)
-        plan = structured.invoke([
-            {"role": "system", "content": sys},
-            {"role": "user", "content": user_content},
-        ])
+        response = designer.invoke(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ]
+        )
     except Exception:
         return None
 
-    # Defensive validation — structured_output may echo hallucinated paths.
-    allowed = set(candidates)
-    cleaned = [p for p in plan.field_paths if p in allowed]
-    if len(cleaned) < MIN_BATCH:
+    tool_calls = getattr(response, "tool_calls", None) or []
+    if not tool_calls:
         return None
-    plan.field_paths = cleaned[:MAX_BATCH]
-    return plan
+    args = tool_calls[0].get("args") or {}
+
+    intent = args.get("intent")
+    components = args.get("components")
+    data = args.get("data") or {"answer": None}
+    if not isinstance(intent, str) or not intent.strip():
+        return None
+    cleaned = _validate_components(components if isinstance(components, list) else [])
+    if cleaned is None:
+        return None
+    if not isinstance(data, dict):
+        data = {"answer": None}
+    return _DesignerOutput(intent=intent.strip(), components=cleaned, data=data)
 
 
-def _fallback_batch(candidates: list[str]) -> BatchPlan:
-    """Section-based grouping used when the LLM is unavailable or hallucinates."""
-    # Group candidates by section in a stable order matching the schema.
-    section_order = ["hardware", "softwareOS", "applications"]
-    by_section: dict[str, list[str]] = {}
-    for p in candidates:
-        sec = FIELD_META.get(p, {}).get("section", "other")
-        by_section.setdefault(sec, []).append(p)
-
-    for sec in section_order:
-        bucket = by_section.get(sec) or []
-        if bucket:
-            chosen = bucket[:MAX_BATCH]
-            return BatchPlan(
-                title=_section_title(sec),
-                rationale=f"Grouped {sec} fields to fill next.",
-                field_paths=chosen,
-            )
-    # Nothing matched the known sections — take whatever's left.
-    chosen = candidates[:MAX_BATCH]
-    return BatchPlan(
-        title="A few more details",
-        rationale="Remaining fields needed to complete the record.",
-        field_paths=chosen,
-    )
-
-
-def _section_title(section: str) -> str:
-    return {
-        "hardware": "Hardware sizing",
-        "softwareOS": "Operating system",
-        "applications": "Application details",
-    }.get(section, "More details")
-
-
-def _humanize_prompts(record: dict, questions: list[Question], title: str) -> None:
-    """Rewrite each question's ``prompt`` in a single LLM round-trip. Silently
-    leaves the canned prompts in place on any error."""
-    if not os.environ.get("LLM_PROVIDER") or not questions:
-        return
-    try:
-        from app.llm import get_llm
-
-        llm = get_llm()
-    except Exception:
-        return
-
-    items = [{"path": q["path"], "fallback": q.get("prompt", "")} for q in questions]
-    sys = (
-        "Rewrite each field's prompt as a concise, natural question (one sentence, "
-        "no trailing option list, no field path). Return ONLY a JSON object of the "
-        "form {\"prompts\": [{\"path\": \"...\", \"prompt\": \"...\"}, ...]} with one "
-        "entry per input item and the same paths."
-    )
-    user = json.dumps({
-        "title": title,
-        "record": record,
-        "items": items,
-    }, default=str)[:6000]
-    try:
-        resp = llm.invoke([
-            {"role": "system", "content": sys},
-            {"role": "user", "content": user},
-        ])
-        content = resp.content if hasattr(resp, "content") else str(resp)
-        if not isinstance(content, str):
-            content = str(content)
-        # Strip markdown fences the LLM might add.
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.strip("`")
-            if content.lower().startswith("json"):
-                content = content[4:].strip()
-        data = json.loads(content)
-        rewrites = {x["path"]: x["prompt"] for x in data.get("prompts", []) if x.get("prompt")}
-    except Exception:
-        return
-
-    for q in questions:
-        new = rewrites.get(q["path"])
-        if new:
-            q["prompt"] = new
+def _emit_render_messages(
+    surface_id: str, ops: list[dict[str, Any]]
+) -> list[Any]:
+    """Wire the planner's surface to the frontend by emitting a
+    AIMessage(tool_calls) + ToolMessage(content) pair, mirroring what the
+    dojo agent's ToolNode produces. The ToolMessage content is the
+    canonical ``{"a2ui_operations": [...]}`` JSON envelope.
+    """
+    tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
+    tool_call = {
+        "id": tool_call_id,
+        "name": "render_a2ui",
+        "args": {"surfaceId": surface_id},
+    }
+    rendered = ck_a2ui.render(ops)  # JSON string with a2ui_operations
+    return [
+        AIMessage(content="", tool_calls=[tool_call]),
+        ToolMessage(content=rendered, tool_call_id=tool_call_id, name="render_a2ui"),
+    ]
 
 
 def question_planner(state: AgentState) -> dict:
@@ -421,48 +294,42 @@ def question_planner(state: AgentState) -> dict:
         catalog = api.get_catalog(stage=record["stage"])
 
     required = catalog.get("stageRequiredFields", [])
-    missing = _missing_paths(record, required)
+    missing = missing_field_paths(record, required)
     if not missing:
-        # Nothing left to collect → next stop is validator (the graph routes).
-        return {"pending_batch": None, "pending_questions": []}
+        return {"pending_use_case_question": None}
 
-    candidates = _filter_by_dependencies(record, missing)
-    if not candidates:
-        # All remaining fields are dependency-gated — fall back to surfacing
-        # the gating fields themselves (should be in `missing`).
-        candidates = missing
-
+    use_case_answers = list(state.get("use_case_answers") or [])
     user_prompt = _initial_user_prompt(state.get("messages") or [])
-    plan = _llm_plan_batch(
+
+    designer = _llm_design_question(
+        state=state,
         user_prompt=user_prompt,
         record=record,
-        stage=record.get("stage", "estimate"),
-        candidates=candidates,
+        use_case_answers=use_case_answers,
+        missing_paths=missing,
     )
-    if plan is None:
-        plan = _fallback_batch(candidates)
+    if designer is None:
+        # No LLM / tool_choice not supported / invalid surface — let the
+        # graph proceed; validator will surface the gaps.
+        return {"pending_use_case_question": None}
 
-    questions = [_build_question(p) for p in plan.field_paths]
-    _humanize_prompts(record, questions, plan.title)
+    surface_id = "use-case-question"
+    catalog_id = ck_a2ui.BASIC_CATALOG_ID
+    ops = [
+        ck_a2ui.create_surface(surface_id, catalog_id=catalog_id),
+        ck_a2ui.update_components(surface_id, designer.components),
+        ck_a2ui.update_data_model(surface_id, designer.data),
+    ]
+    question_id = str(uuid.uuid4())
 
-    batch: QuestionBatch = {
-        "batch_id": str(uuid.uuid4()),
-        "title": plan.title,
-        "rationale": plan.rationale,
-        "questions": questions,
-        "submitted": False,
-        "errors": {},
+    pending: UseCaseQuestion = {
+        "question_id": question_id,
+        "intent": designer.intent,
+        "surface_id": surface_id,
+        "a2ui_operations": ops,
     }
 
-    # The batch rides as a sentinel-prefixed JSON payload inside the AIMessage
-    # content. The frontend parses messages (which we know flow reliably via
-    # AG-UI MESSAGES_SNAPSHOT/TEXT_MESSAGE events) and renders the form
-    # whenever the latest AI message starts with `__BATCH__`. Mirroring it on
-    # `pending_batch` is kept for the REST `/threads/*` fallback only.
-    payload = json.dumps({"batch": batch}, default=str)
-    content = f"__BATCH__{payload}"
     return {
-        "pending_batch": batch,
-        "pending_questions": [],
-        "messages": [AIMessage(content=content)],
+        "pending_use_case_question": pending,
+        "messages": _emit_render_messages(surface_id, ops),
     }

@@ -10,27 +10,31 @@ import {
 } from "@copilotkit/react-core/v2";
 import { useRecordStore } from "@/state/recordStore";
 import {
-  BATCH_ANSWER_SENTINEL,
-  BATCH_SENTINEL,
-  type BatchAnswerPayload,
-  parseBatchMessage,
+  A2UI_ACTION_SENTINEL,
+  RENDER_A2UI_TOOL_NAME,
+  findLatestPendingA2UISurface,
 } from "@/types/agent";
-import { BatchedQuestionForm } from "./BatchedQuestionForm";
+import { A2UICatalog } from "./A2UICatalog";
+import { A2UISurface } from "./A2UISurface";
 
-export function ChatPanel({ mode }: { mode: "A" | "B" }) {
-  // Stable per-mount threadId so useAgent (here) and the CopilotChat below
-  // resolve to the *same* per-thread agent clone. Without this wrapping
-  // provider, CopilotChat creates its own ad-hoc threadId internally and our
-  // useAgent sees the registry agent — two different instances, so message
-  // updates never re-render this component.
+export function ChatPanel({
+  mode,
+  threadId,
+}: {
+  mode: "A" | "B";
+  threadId?: string;
+}) {
+  // Stable per-mount threadId so useAgent and CopilotChat resolve to the
+  // *same* per-thread agent clone.
   const threadIdRef = useRef<string>();
-  if (!threadIdRef.current) threadIdRef.current = cryptoRandomId();
+  if (!threadIdRef.current) threadIdRef.current = threadId ?? cryptoRandomId();
 
   return (
     <CopilotChatConfigurationProvider
       agentId="provisioning_agent"
       threadId={threadIdRef.current}
     >
+      <A2UICatalog />
       <ChatPanelInner mode={mode} />
     </CopilotChatConfigurationProvider>
   );
@@ -39,10 +43,6 @@ export function ChatPanel({ mode }: { mode: "A" | "B" }) {
 function ChatPanelInner({ mode }: { mode: "A" | "B" }) {
   const record = useRecordStore((s) => s.record);
 
-  // Expose the active record + mode-specific guidance to the agent as
-  // context. v2 useAgentContext is the successor to v1 useCopilotReadable.
-  // Pre-stringify so undefined fields are dropped (JsonSerializable forbids
-  // undefined property values).
   useAgentContext({
     description:
       "The server provisioning record the user is editing, plus mode guidance.",
@@ -59,54 +59,52 @@ function ChatPanelInner({ mode }: { mode: "A" | "B" }) {
       instructions:
         mode === "B"
           ? "Mode B (provisioning): answer questions about the current configuration; only modify fields on an explicit edit instruction (e.g. 'set RAID to 10')."
-          : "Mode A (estimate/proposal): batch related unfilled fields into a single generative-UI form (pending_batch in shared state). Do not try to drive a one-question-at-a-time conversation.",
+          : "Mode A (estimate/proposal): ask one use-case question at a time via an A2UI surface (single Card with one input + a submit Button). Never ask the user about a record field by name — infer field values from the use-case answers.",
     }),
   });
 
-  // Re-render whenever messages arrive — the planner embeds the batch payload
-  // as a `__BATCH__{...}` AIMessage so the generative-UI form rides on the
-  // messages channel (which is reliable) instead of AG-UI state-sync.
   const { agent } = useAgent({
     agentId: "provisioning_agent",
-    updates: [UseAgentUpdate.OnMessagesChanged, UseAgentUpdate.OnRunStatusChanged, UseAgentUpdate.OnStateChanged],
+    updates: [
+      UseAgentUpdate.OnMessagesChanged,
+      UseAgentUpdate.OnRunStatusChanged,
+      UseAgentUpdate.OnStateChanged,
+    ],
   });
 
-  // Walk back from the most recent message; show the form only if the latest
-  // assistant message is a batch and no later user message has answered it.
-  const pendingBatch = useMemo(() => {
+  // Look for the latest unanswered render_a2ui ToolMessage in the
+  // transcript — that's the canonical wire format from the planner.
+  const pendingSurface = useMemo(() => {
     if (mode !== "A" || !agent) return null;
-    const msgs = agent.messages ?? [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i] as { role?: string; content?: unknown };
-      if (m.role === "user") return null;
-      if (m.role === "assistant") {
-        const batch = parseBatchMessage(m.content);
-        if (batch && !batch.submitted) return batch;
-        return null;
-      }
-    }
-    return null;
+    return findLatestPendingA2UISurface(
+      agent.messages as ReadonlyArray<{ role?: string; name?: string; content?: unknown }>,
+    );
   }, [mode, agent, agent?.messages]);
+
+  // Pull the surface_id and question_id straight from the agent state so we
+  // can correlate the user's submission with the pending question.
+  const pendingQuestion = (agent?.state as
+    | { pending_use_case_question?: { question_id?: string; surface_id?: string; intent?: string } }
+    | undefined)?.pending_use_case_question;
 
   const isRunning = agent?.isRunning === true;
 
-  console.log("agent", agent)
-  console.log("pending batch", pendingBatch)
-  console.log("mode", mode)
-  console.log("isRunning", isRunning)
-
-  const submitBatch = useCallback(
-    (payload: BatchAnswerPayload) => {
-      if (!agent) return;
+  const submitAnswer = useCallback(
+    (answer: unknown) => {
+      if (!agent || !pendingQuestion?.question_id) return;
+      const payload = {
+        question_id: pendingQuestion.question_id,
+        intent: pendingQuestion.intent,
+        answer,
+      };
       agent.addMessage({
         id: cryptoRandomId(),
         role: "user",
-        content: `${BATCH_ANSWER_SENTINEL}${JSON.stringify(payload)}`,
+        content: `${A2UI_ACTION_SENTINEL}${JSON.stringify(payload)}`,
       });
-      // Fire-and-forget; subscribers will update the chat transcript.
       void agent.runAgent();
     },
-    [agent],
+    [agent, pendingQuestion?.question_id, pendingQuestion?.intent],
   );
 
   const labels = useMemo(
@@ -114,25 +112,28 @@ function ChatPanelInner({ mode }: { mode: "A" | "B" }) {
       chatInputPlaceholder:
         mode === "B"
           ? "Ask or instruct…"
-          : pendingBatch
-          ? "Fill the form above, then continue…"
-          : "Your answer…",
+          : pendingSurface
+          ? "Use the form above to answer…"
+          : "Type to start, or wait for the next question…",
       welcomeMessageText:
         mode === "B"
           ? 'Ask about the current configuration, or say things like "set RAID to 10".'
-          : "I'll group related questions into a short form so you can answer them together.",
+          : "Tell me about your use case — workload, scale, audience, constraints — and I'll figure out the rest.",
     }),
-    [mode, pendingBatch],
+    [mode, pendingSurface],
   );
 
   return (
     <aside style={panelStyle}>
-      {pendingBatch && (
-        <BatchedQuestionForm
-          batch={pendingBatch}
-          disabled={isRunning}
-          onSubmit={submitBatch}
-        />
+      {pendingSurface && pendingQuestion?.surface_id && (
+        <div style={surfaceWrapStyle}>
+          <A2UISurface
+            surfaceId={pendingQuestion.surface_id}
+            operations={pendingSurface.a2ui_operations}
+            onSubmit={submitAnswer}
+            disabled={isRunning}
+          />
+        </div>
       )}
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <CopilotChat
@@ -140,9 +141,9 @@ function ChatPanelInner({ mode }: { mode: "A" | "B" }) {
           labels={labels}
           messageView={{
             assistantMessage:
-              BatchAwareAssistantMessage as unknown as typeof CopilotChatAssistantMessage,
+              A2UIAwareAssistantMessage as unknown as typeof CopilotChatAssistantMessage,
             userMessage:
-              BatchAwareUserMessage as unknown as typeof CopilotChatUserMessage,
+              A2UIAwareUserMessage as unknown as typeof CopilotChatUserMessage,
           }}
         />
       </div>
@@ -150,43 +151,34 @@ function ChatPanelInner({ mode }: { mode: "A" | "B" }) {
   );
 }
 
-// Rewrite `__BATCH__{...}` assistant messages into a friendly summary so the
-// raw sentinel + JSON payload never appears in the chat transcript. The form
-// itself is rendered separately above the chat by ChatPanel.
-function BatchAwareAssistantMessage(
+// Hide the empty AIMessage that carries the render_a2ui tool_call — the
+// surface itself renders separately above the chat. Also hide assistant
+// messages with no visible content.
+function A2UIAwareAssistantMessage(
   props: React.ComponentProps<typeof CopilotChatAssistantMessage>,
 ) {
   const { message } = props;
-  const content = typeof message?.content === "string" ? message.content : "";
-  if (content.startsWith(BATCH_SENTINEL)) {
-    const batch = parseBatchMessage(content);
-    const friendly = batch
-      ? `**${batch.title}** — please fill the form on the right.${
-          batch.rationale ? `\n\n_${batch.rationale}_` : ""
-        }`
-      : "Please fill the form on the right.";
-    return (
-      <CopilotChatAssistantMessage
-        {...props}
-        message={{ ...message, content: friendly }}
-      />
-    );
+  const m = message as { content?: unknown; tool_calls?: { name?: string }[] };
+  const calls = Array.isArray(m?.tool_calls) ? m.tool_calls : [];
+  if (calls.some((c) => c?.name === RENDER_A2UI_TOOL_NAME)) {
+    return null;
   }
+  const content = typeof m?.content === "string" ? m.content : "";
+  if (!content.trim()) return null;
   return <CopilotChatAssistantMessage {...props} />;
 }
 
-// Hide the raw `__BATCH_ANSWER__{...}` echo from the transcript by rendering
-// a short readable line in its place.
-function BatchAwareUserMessage(
+// Hide the raw `__A2UI_ACTION__{...}` echo from the transcript.
+function A2UIAwareUserMessage(
   props: React.ComponentProps<typeof CopilotChatUserMessage>,
 ) {
   const { message } = props;
   const content = typeof message?.content === "string" ? message.content : "";
-  if (content.startsWith(BATCH_ANSWER_SENTINEL)) {
+  if (content.startsWith(A2UI_ACTION_SENTINEL)) {
     return (
       <CopilotChatUserMessage
         {...props}
-        message={{ ...message, content: "_(form submitted)_" }}
+        message={{ ...message, content: "_(answer submitted)_" }}
       />
     );
   }
@@ -209,6 +201,12 @@ const panelStyle: React.CSSProperties = {
   borderRadius: 6,
   background: "white",
   minHeight: 400,
-  maxHeight: 700,
+  height: "100%",
   overflow: "hidden",
+};
+
+const surfaceWrapStyle: React.CSSProperties = {
+  padding: 12,
+  borderBottom: "1px solid #eee",
+  background: "#f7faff",
 };

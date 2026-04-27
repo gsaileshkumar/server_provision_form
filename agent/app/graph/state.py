@@ -1,35 +1,26 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional, TypedDict
+from typing import Annotated, Any, Literal, Optional, TypedDict
 
 from langgraph.graph.message import add_messages
 
 Mode = Literal["A", "B"]
 Stage = Literal["estimate", "proposal", "provisioning"]
 
-QuestionKind = Literal["select", "multi-select", "number", "text", "boolean"]
 
+class UseCaseQuestion(TypedDict, total=False):
+    """A use-case question rendered as a dynamic A2UI surface.
 
-class Question(TypedDict, total=False):
-    """A planned question grouped into structured options where possible."""
+    The planner decides what to ask next based on the user's prompt and the
+    current record state. The question never asks for a record field by name;
+    it asks about the user's *intent* (workload, scale, HA, compliance, etc.)
+    and the field_inferrer maps the answer to one or more record fields.
+    """
 
-    path: str  # dotted field path, e.g. "hardware.workloadProfile"
-    prompt: str  # human-readable prompt
-    options: list[str]  # structured options, if any
-    kind: QuestionKind
-    required: bool
-    depends_on: Optional[str]
-
-
-class QuestionBatch(TypedDict, total=False):
-    """A group of semantically related questions rendered as one form."""
-
-    batch_id: str
-    title: str
-    rationale: str
-    questions: list[Question]
-    submitted: bool
-    errors: dict[str, str]  # path -> human-readable error
+    question_id: str
+    intent: str  # short label used by extractor / inferrer to group answers
+    surface_id: str
+    a2ui_operations: list[dict[str, Any]]
 
 
 class AgentState(TypedDict, total=False):
@@ -44,16 +35,12 @@ class AgentState(TypedDict, total=False):
     stage: Stage
     record_id: Optional[str]
     record_name: Optional[str]
-    # Mode-A batched question form. While populated, the frontend renders a
-    # generative-UI form and disables free-text chat.
-    pending_batch: Optional[QuestionBatch]
-    last_batch_id: Optional[str]
-    # Legacy single-question list — retained for Mode-B compatibility and the
-    # `/threads/*` REST fallback. Mode-A batched flow does not populate it.
-    pending_questions: list[Question]
-    # Scratch buffer for field values the user has answered but haven't yet
-    # been PATCHed back to the Form API. Kept for debugging.
-    extracted: dict
+    # The active use-case question. While populated, the chat awaits a
+    # structured A2UI action from the user (form submission via a Button).
+    pending_use_case_question: Optional[UseCaseQuestion]
+    # Append-only history of (intent, answer) pairs the user has provided so
+    # the planner can avoid asking the same use-case topic twice.
+    use_case_answers: list[dict[str, Any]]
     # Populated by validator node after calling /validate.
     last_validation: dict
     # True while the reviewer has posted a summary and is waiting for an
