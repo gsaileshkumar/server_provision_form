@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from server_agent.config import (
+from config import (
     BASE_PRICE_USD,
     FIELD_OPTIONS,
     PER_CORE_USD,

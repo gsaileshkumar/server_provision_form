@@ -7,7 +7,7 @@ import sys
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
 
-from server_agent.agent import build_agent
+from agent import build_agent
 
 
 def main() -> int:

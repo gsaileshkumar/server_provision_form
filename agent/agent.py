@@ -7,7 +7,7 @@ import os
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 
-from server_agent.tools import TOOLS
+from tools import TOOLS
 
 SYSTEM_PROMPT = """You are a helpful server provisioning assistant.
 
