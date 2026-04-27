@@ -1,4 +1,4 @@
-"""Tiny REPL for chatting with the server provisioning agent."""
+"""Tiny REPL for chatting with the infrastructure agent."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def main() -> int:
     agent = build_agent()
     history: list = []
 
-    print("Server provisioning agent. Type 'exit' to quit.\n")
+    print("Infrastructure assistant. Type 'exit' to quit.\n")
     while True:
         try:
             user = input("you> ").strip()
