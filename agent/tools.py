@@ -93,20 +93,36 @@ def validate_config(
 
 
 @tool
-def get_field_options(field: str) -> dict:
-    """Return the available options for a server provisioning field.
+def get_field_options(fields) -> dict:
+    """Return the available options for one or more server provisioning fields.
 
-    Use this when the user asks what values are valid for a field such as
-    "os", "server_type", "cpu_cores", "memory_gb", "storage_gb", or "region".
+    Args:
+        fields (str | list[str]): A single field or a list of fields such as
+        "os", "server_type", "cpu_cores", "memory_gb", "storage_gb", or "region".
     """
-    key = field.strip().lower().replace(" ", "_")
-    if key not in FIELD_OPTIONS:
-        return {
-            "field": field,
-            "error": f"Unknown field '{field}'.",
-            "known_fields": sorted(FIELD_OPTIONS.keys()),
-        }
-    return {"field": key, "options": FIELD_OPTIONS[key]}
+    if isinstance(fields, str):
+        fields = [fields]
+
+    result = {}
+    errors = {}
+
+    for field in fields:
+        key = field.strip().lower().replace(" ", "_")
+
+        if key not in FIELD_OPTIONS:
+            errors[field] = {
+                "error": f"Unknown field '{field}'.",
+                "known_fields": sorted(FIELD_OPTIONS.keys()),
+            }
+        else:
+            result[key] = FIELD_OPTIONS[key]
+
+    response = {"options": result}
+
+    if errors:
+        response["errors"] = errors
+
+    return response
 
 
 @tool

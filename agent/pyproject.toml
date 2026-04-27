@@ -9,6 +9,7 @@ dependencies = [
     "langchain>=1.2.15",
     "langchain-openai>=1.2.1",
     "python-dotenv>=1.1.0",
+    "copilotkit==0.1.87"
 ]
 
 [project.scripts]
