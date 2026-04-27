@@ -1,11 +1,11 @@
-"""Build the LangGraph ReAct agent wired to an OpenAI-spec LLM."""
+"""Build the LangGraph agent wired to an OpenAI-spec LLM."""
 
 from __future__ import annotations
 
 import os
 
+from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
 
 from server_agent.tools import TOOLS
 
@@ -25,7 +25,7 @@ before calling the estimator.
 
 
 def build_agent(model: str | None = None):
-    """Create the LangGraph ReAct agent.
+    """Create the LangGraph agent using `langchain.agents.create_agent`.
 
     The model is any chat model that speaks the OpenAI Chat Completions spec.
     Set `OPENAI_BASE_URL` to point at a compatible gateway (Azure OpenAI,
@@ -37,4 +37,4 @@ def build_agent(model: str | None = None):
         base_url=os.getenv("OPENAI_BASE_URL") or None,
         api_key=os.getenv("OPENAI_API_KEY"),
     )
-    return create_react_agent(llm, tools=TOOLS, prompt=SYSTEM_PROMPT)
+    return create_agent(model=llm, tools=TOOLS, system_prompt=SYSTEM_PROMPT)

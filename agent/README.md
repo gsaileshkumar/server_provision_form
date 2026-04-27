@@ -1,10 +1,11 @@
 # Server Provisioning Agent
 
-A minimal [LangGraph](https://github.com/langchain-ai/langgraph) ReAct agent that
-helps a user size and price a server before they fill out the provisioning
-form. The agent is wired to an OpenAI-spec chat model (so it works with
-OpenAI, Azure OpenAI, Ollama, vLLM, OpenRouter, etc.) and a small set of
-dummy tools backed by a hardcoded catalog.
+A minimal LangChain v1 / [LangGraph](https://github.com/langchain-ai/langgraph)
+agent (built with `langchain.agents.create_agent`) that helps a user size and
+price a server before they fill out the provisioning form. The agent is wired
+to an OpenAI-spec chat model (so it works with OpenAI, Azure OpenAI, Ollama,
+vLLM, OpenRouter, etc.) and a small set of dummy tools backed by a hardcoded
+catalog.
 
 ## Tools
 
