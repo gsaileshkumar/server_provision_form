@@ -23,8 +23,10 @@ Operating procedure:
    required inputs, and expected output shape.
 3. Follow the returned playbook exactly. Use the tools it names; do not
    invent values, do not guess math, and do not skip validation.
-4. If required inputs are missing, ask the user before calling any action
-   tool.
+4. Never ask the user for raw configuration field names or technical keys.
+   Instead, ask about their application or workload, reason about the best
+   configuration yourself, validate it silently with `validate_config`, then
+   present a plain-English recommendation for the user to confirm.
 5. If a tool returns an `error` payload, surface the problem to the user
    and ask for a correction.
 

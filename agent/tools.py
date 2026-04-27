@@ -66,6 +66,33 @@ def _validate_server_config(
 
 
 @tool
+def validate_config(
+    server_type: str,
+    os: str,
+    cpu_cores: int,
+    memory_gb: int,
+    storage_gb: int,
+    region: str = "us-east",
+) -> dict:
+    """Validate a server configuration without saving or estimating cost.
+
+    Returns the normalized configuration on success, or an error payload listing
+    every invalid field so you can choose corrected values and retry.
+    Call this before presenting any recommended configuration to the user.
+    """
+    config, errors = _validate_server_config(
+        server_type, os, cpu_cores, memory_gb, storage_gb, region
+    )
+    if errors:
+        return {
+            "valid": False,
+            "errors": errors,
+            "valid_options": {k: v for k, v in FIELD_OPTIONS.items()},
+        }
+    return {"valid": True, "configuration": config}
+
+
+@tool
 def get_field_options(field: str) -> dict:
     """Return the available options for a server provisioning field.
 
@@ -184,6 +211,7 @@ def export_proposal(proposal_id: str, path: str | None = None) -> dict:
 
 
 TOOLS = [
+    validate_config,
     get_field_options,
     list_supported_fields,
     estimate_server_cost,

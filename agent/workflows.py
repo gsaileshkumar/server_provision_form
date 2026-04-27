@@ -12,29 +12,50 @@ from langchain_core.tools import tool
 WORKFLOWS: dict[str, str] = {
     "server_estimation": """Goal: produce a monthly USD cost estimate for a server build.
 
-Required inputs: server_type, os, cpu_cores, memory_gb, storage_gb, region (default 'us-east').
-
 Steps:
-  1. If the user is unsure of valid values for any field, call
-     `list_supported_fields` and/or `get_field_options(field=...)`.
-  2. Once every required input is known, call `estimate_server_cost(...)`.
-  3. Never compute the price yourself. If the tool returns an `error`
-     payload, ask the user to fix the offending field.
-  4. Reply with the monthly cost and the breakdown.
+  1. Ask the user about their application or workload - understand the use case
+     before touching any configuration fields. One or two focused questions are
+     enough (e.g. "What will run on this server?", "Expected traffic or data
+     volume?", "Any OS or region preference?"). Do NOT list field names at the user.
+  2. Based on their answers, reason internally about the best-fit configuration
+     (server_type, os, cpu_cores, memory_gb, storage_gb, region). Use
+     `get_field_options(field=...)` if you need to confirm which values are valid.
+  3. Call `validate_config(...)` with your chosen values.
+     - If it returns `valid: false`, examine the errors, pick corrected values
+       from the returned `valid_options`, and retry `validate_config` until it
+       returns `valid: true`. Never show an invalid config to the user.
+  4. Present the validated configuration to the user as a recommendation with
+     brief reasoning (e.g. "For a medium-traffic web app I'd suggest...").
+     Ask them to confirm or adjust.
+  5. Once the user confirms (or provides corrections), call
+     `estimate_server_cost(...)` with the final configuration.
+  6. Reply with the monthly cost and the breakdown. Never compute the price
+     yourself. If the tool returns an `error` payload, fix the offending field
+     and retry.
 """,
     "server_proposal": """Goal: register a server build configuration as a formal proposal (status='proposed').
 
-Required inputs: same six fields as `server_estimation` (server_type, os,
-cpu_cores, memory_gb, storage_gb, region).
-
 Steps:
-  1. Gather the same inputs as `server_estimation`. Use `get_field_options`
-     if any value looks unusual.
-  2. Call `submit_proposal(...)` with the full configuration.
-  3. On success the tool returns `{"id": ..., "proposal": {...}}`. Tell
-     the user the proposal id; they will need it to export later.
-  4. If the tool returns an `error` payload, the configuration failed
-     validation - ask the user to correct it.
+  1. Ask the user about their application or workload - understand the use case
+     before touching any configuration fields. One or two focused questions are
+     enough (e.g. "What will run on this server?", "Expected traffic or data
+     volume?", "Any OS or region preference?"). Do NOT list field names at the user.
+  2. Based on their answers, reason internally about the best-fit configuration
+     (server_type, os, cpu_cores, memory_gb, storage_gb, region). Use
+     `get_field_options(field=...)` if you need to confirm which values are valid.
+  3. Call `validate_config(...)` with your chosen values.
+     - If it returns `valid: false`, examine the errors, pick corrected values
+       from the returned `valid_options`, and retry `validate_config` until it
+       returns `valid: true`. Never show an invalid config to the user.
+  4. Present the validated configuration to the user as a clear recommendation
+     (e.g. "Based on your use case, I'd suggest..."). Ask them to confirm or
+     adjust before creating the proposal.
+  5. If the user adjusts any values, call `validate_config` again to confirm the
+     revised configuration is valid before submitting.
+  6. Call `submit_proposal(...)` with the confirmed configuration.
+     - On success the tool returns `{"id": ..., "proposal": {...}}`. Tell the
+       user the proposal id; they will need it to export later.
+     - If the tool returns an `error` payload, fix the offending field and retry.
 """,
     "proposal_export": """Goal: write a previously submitted proposal to disk as a JSON file.
 
